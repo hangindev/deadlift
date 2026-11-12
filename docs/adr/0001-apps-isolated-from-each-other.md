@@ -16,10 +16,10 @@ Rootless Docker per App and a Server per App would both isolate better. We rejec
 Each App has its own CI tag and its own deploy user, and the deploy user may run exactly one command as root, the entry command, through one `sudo` rule:
 
 ```text
-deadlift-eleven ALL=(root) NOPASSWD: /usr/local/sbin/deadlift-entry
+deadlift-myapp ALL=(root) NOPASSWD: /usr/local/sbin/deadlift-entry
 ```
 
-The rule names no arguments, so the operation and its arguments are the entry command's to check. It works out the App from the user who called it (`SUDO_USER`, here `deadlift-eleven`), so a deploy user can only ever act on its own App, whatever arguments it passes. The deploy user isn't in the `docker` group, so the entry command pulls the App's images too, with the job's short-lived token sent inside the delivery and removed after.
+The rule names no arguments, so the operation and its arguments are the entry command's to check. It works out the App from the user who called it (`SUDO_USER`, here `deadlift-myapp`), so a deploy user can only ever act on its own App, whatever arguments it passes. The deploy user isn't in the `docker` group, so the entry command pulls the App's images too, with the job's short-lived token sent inside the delivery and removed after.
 
 ```mermaid
 flowchart LR
