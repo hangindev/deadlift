@@ -21,7 +21,7 @@ An App's long-lived Environment, which tracks one branch, `main` by default.
 _Avoid_: Prod, staging, Main Environment
 
 **Feature Environment**:
-An App's short-lived Environment for one open pull request.
+An App's short-lived Environment for one piece of work in progress, such as a pull request.
 _Avoid_: Preview, review app, branch deploy
 
 **Slot**:
