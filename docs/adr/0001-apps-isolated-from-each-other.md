@@ -4,9 +4,9 @@ status: proposed
 
 # Apps on a Server are isolated from each other, and an App trusts its own deliveries
 
-Several Apps share one Server, and every delivery carries a Compose template from the commit being deployed, which the Docker daemon runs as root. Eleven, the first App, guarded only against accidents (its ADR 0013), which was enough for a single owner's single app. With several Apps on one Server, that would let any commit one App delivers read another App's secrets and data. We decided on two levels of trust:
+Several Apps share one Server, and every delivery carries a Compose template from the commit being deployed, which the Docker daemon runs as root. Guarding only against accidents is enough for a single App on its own Server. With several Apps on one Server, it would let any commit one App delivers read another App's secrets and data. We decided on two levels of trust:
 
-- **Within an App, whatever its CI delivers is trusted.** Any commit the App's CI deploys can change the App's own Compose template, and so its own Environments, the Dev Environment included. That is Eleven's ADR 0013 trade-off, kept per App.
+- **Within an App, whatever its CI delivers is trusted.** Any commit the App's CI deploys can change the App's own Compose template, and so its own Environments, the Dev Environment included. Guarding against that would cost every App a manual step on each release.
 - **Between Apps on a Server, nothing is trusted.** One App's CI, or a container it runs, can't reach another App's state, secrets, volumes or addresses, short of a kernel escape.
 
 Rootless Docker per App and a Server per App would both isolate better. We rejected them because they cost more to run and set up than these rules, which close the realistic paths. No App gets an exception: an App that needs something these rules refuse works around them.
@@ -93,6 +93,6 @@ Without the dropped routes, one App's Environment could open another App's Envir
 
 ## Consequences
 
-- An App can't use bind mounts, host files, `build`, extra capabilities, the Docker socket or its own published ports. An App that needs one of them works around it or doesn't use deadlift. Eleven's planned Sandbox Runner, which holds the socket in its current design, is the first known case.
+- An App can't use bind mounts, host files, `build`, extra capabilities, the Docker socket or its own published ports. An App that needs one of them works around it or doesn't use deadlift.
 - Every App needs its own Tailscale tag, SSH rule, federated credential and deploy user. Adding an App walks through these.
-- Within an App, whoever can get a commit delivered controls that App's Environments and their data, as ADR 0013 accepted for Eleven.
+- Within an App, whoever can get a commit delivered controls that App's Environments and their data.
