@@ -16,7 +16,7 @@ What that means for each thing Eleven had:
 
 - **Postgres built in**, with dumps, restores and a schema check. Rejected: it serves one kind of App, and a dump needs credentials and tools that deadlift would have to know about.
 - **Hooks**, such as a `check` run before anything stops. Rejected: the App's own migration answers the same question. The cost is a few seconds of downtime and a red run when data doesn't fit, which is rare and only on the App's own Environments.
-- **Sites**, static files published beside an Environment with their own lifecycle. Rejected: a second kind of delivery and a second tar. An App serves its static files from its own Compose file instead, and a PR's static files then live and die with its Feature Environment.
+- **Sites**, static files published beside an Environment with their own lifecycle. Rejected: a second kind of delivery and a second tar. An App serves its static files from its own Compose file instead, and they then live and die with its Environment.
 - **Several routed services per Environment.** Rejected until an App needs it. A proxy in the App's Compose file does the same.
 
 ## Consequences
