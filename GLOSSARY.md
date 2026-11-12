@@ -8,10 +8,6 @@ Delivers self-hosted apps from GitHub onto a Server reached only over a tailnet:
 A repository whose code deadlift delivers to a Server, described by one Compose file that holds everything it runs. Several Apps may share one Server.
 _Avoid_: Project (a Docker Compose project is one Environment), service, tenant
 
-**Default App**:
-The one App on a Server whose Dev Environment takes the Server's plain HTTPS address, on port 443.
-_Avoid_: Primary app, main app
-
 **Server**:
 A dedicated machine that deadlift sets up and delivers to, hosting the Environments of one or more Apps.
 _Avoid_: Project Server, host, box, VPS

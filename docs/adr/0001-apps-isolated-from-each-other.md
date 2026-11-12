@@ -74,7 +74,7 @@ Each Environment is reached through one routed service, which may be a proxy in 
 
 ```mermaid
 flowchart LR
-  OWN["The tailnet:<br/>the owner, agents"] -->|"HTTPS :443 for the Default App's<br/>Dev Environment, else a port<br/>in the App's block"| SERVE
+  OWN["The tailnet:<br/>the owner, agents"] -->|"HTTPS on the App's own name,<br/>app.tailXXXX.ts.net:<br/>:443 for Dev, a port per Slot<br/>for Feature (ADR 0003)"| SERVE
   subgraph SRV["Server"]
     SERVE["Tailscale Serve"] -->|"127.0.0.1:port"| ROUTE
     subgraph ENV["One Environment: a Compose project with its own network"]
