@@ -13,11 +13,11 @@ No App is special, so there is no default App. On the Server, deadlift maps each
 
 ```mermaid
 flowchart LR
-  B["A browser on the tailnet"] -->|"eleven.tailXXXX.ts.net:443"| S1
-  B -->|"eleven.tailXXXX.ts.net, a Slot's port"| S1
+  B["A browser on the tailnet"] -->|"myapp.tailXXXX.ts.net:443"| S1
+  B -->|"myapp.tailXXXX.ts.net, a Slot's port"| S1
   B -->|"other.tailXXXX.ts.net:443"| S2
   subgraph SRV["Server, tagged"]
-    S1["svc:eleven"] --> D1["127.0.0.1: Dev's port"]
+    S1["svc:myapp"] --> D1["127.0.0.1: Dev's port"]
     S1 --> F1["127.0.0.1: feature-n's port"]
     S2["svc:other"] --> D2["127.0.0.1: Dev's port"]
   end
@@ -38,7 +38,7 @@ Adding an App creates its Service, from the owner's computer, so the Server stil
 
 ## Unverified
 
-These weren't confirmed from Tailscale's documentation. The run on a throwaway Server must settle them before Eleven switches over:
+These weren't confirmed from Tailscale's documentation. The run on a throwaway Server must settle them before any App relies on them:
 
 - **A Service serving Feature Environments on extra ports.** A Service's definition lists its ports (or `do-not-validate`), and it isn't documented whether one Service can serve HTTPS on many ports that come and go with Slots, or whether each port needs approving. If not, Feature Environments go back to ports on the Server's own name.
 - **Auto-approval by tag**: whether `autoApprovers` keyed on the Service's tag approves a newly defined Service on the Server without a human.
