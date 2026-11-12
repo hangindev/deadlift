@@ -22,4 +22,5 @@ What that means for each thing Eleven had:
 ## Consequences
 
 - Volume Snapshots stop the whole Dev Environment, the database included, so every Dev deploy has a few seconds of downtime, and the snapshots are the size of the raw volumes.
+- Data an App keeps outside the Server, such as a hosted database, isn't in any Volume Snapshot. Recovery and Rollback put back only the version for it, and the App protects that data itself.
 - Eleven changes to fit: its migration runs its schema check first, and its Component Gallery moves into its Compose file, behind a proxy or its web server.
