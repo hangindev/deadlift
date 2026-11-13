@@ -19,6 +19,23 @@ export interface SentDelivery {
   files: Record<string, string>;
 }
 
+/** One image tag as the registry got it. */
+export interface PushedImage {
+  ref: string;
+  /** The login it was pushed with. */
+  login: { registry: string; username: string; password: string };
+  /** The platform it was built for: one, or several separated by commas. */
+  platform: string;
+  /** Whether provenance and SBOM attestations were pushed with it, as buildx's --provenance and
+   * --sbom (true unless set). */
+  provenance: string;
+  sbom: string;
+  context: string;
+  dockerfile: string;
+  target: string;
+  labels: string[];
+}
+
 export function fakeRunner() {
   const dir = mkdtempSync(join(tmpdir(), "deadlift-test-runner-"));
   const state = join(dir, "state");
@@ -35,6 +52,8 @@ export function fakeRunner() {
   return {
     /** The job's checkout, where the action runs. */
     workspace,
+    /** The runner user's home directory. */
+    home: env.HOME,
     /** Makes the Server answer the next deliveries with this output and exit code. */
     serverAnswers(output: string, status = 0) {
       writeFileSync(join(state, "server-reply"), output);
@@ -60,6 +79,17 @@ export function fakeRunner() {
           files,
         };
       });
+    },
+    /** Every image tag pushed to a registry, in order. */
+    pushed(): PushedImage[] {
+      try {
+        return readFileSync(join(state, "pushed.jsonl"), "utf8")
+          .split("\n")
+          .filter(Boolean)
+          .map((line) => JSON.parse(line));
+      } catch {
+        return [];
+      }
     },
     /** Every call to the runner's faked tools, such as `sudo tailscale logout`, in order. */
     calls(): string[] {
