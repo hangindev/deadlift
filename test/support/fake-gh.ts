@@ -59,14 +59,17 @@ function main(argv: string[]): number {
     return 3;
   }
   const [route, query = ""] = path.replace(/^\//, "").split("?");
-  const perPage = Number(new URLSearchParams(query).get("per_page") ?? 30);
+  const perPage = Math.min(
+    Number(new URLSearchParams(query).get("per_page") ?? 30),
+    state.maxPerPage ?? 100,
+  );
 
   const failure = state.failures?.find(
     (f) => f.method === method && route.startsWith(f.pathPrefix),
   );
   try {
     if (failure) throw new HttpError(failure.status ?? 500, "Server Error");
-    const body = handle(method, decodeURIComponent(route));
+    const body = handle(method, route);
     writeFileSync(statePath!, JSON.stringify(state, null, 2));
     if (body === undefined) return 0;
     const pages = Array.isArray(body) ? chunk(body, perPage) : [body];
@@ -99,8 +102,9 @@ function handle(method: string, route: string): unknown {
   m = route.match(/^(users|orgs)\/([^/]+)\/packages\/container\/([^/]+)\/versions(?:\/(\d+))?$/);
   if (m) {
     const [, kind, owner, name, id] = m;
-    const pkg = state.packages?.[owner]?.[name];
-    const ownerKind = state.owners?.[owner] === "Organization" ? "orgs" : "users";
+    // As in GitHub's API, a package name's slashes must be encoded (shop%2Fweb).
+    const pkg = lookup(state.packages, owner)?.[decodeURIComponent(name)];
+    const ownerKind = lookup(state.owners, owner) === "Organization" ? "orgs" : "users";
     if (!pkg || kind !== ownerKind) throw new HttpError(404, "Package not found.");
     if (method === "GET" && id === undefined) {
       return [...pkg].sort((a, b) => b.created_at.localeCompare(a.created_at));
@@ -116,7 +120,7 @@ function handle(method: string, route: string): unknown {
 }
 
 function repoOf(fullName: string) {
-  const repo = state.repos?.[fullName];
+  const repo = lookup(state.repos, fullName);
   if (!repo) throw new HttpError(404, "Not Found");
   return repo;
 }
@@ -147,6 +151,12 @@ function compare(commits: Record<string, string[]>, base: string, head: string) 
     ahead_by: [...ofHead].filter((sha) => !ofBase.has(sha)).length,
     behind_by: [...ofBase].filter((sha) => !ofHead.has(sha)).length,
   };
+}
+
+// GitHub's owner and repository names are case-insensitive.
+function lookup<T>(map: Record<string, T> | undefined, name: string): T | undefined {
+  const key = Object.keys(map ?? {}).find((k) => k.toLowerCase() === name.toLowerCase());
+  return key === undefined ? undefined : map![key];
 }
 
 function chunk<T>(items: T[], size: number): T[][] {
