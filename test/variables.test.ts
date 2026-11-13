@@ -157,8 +157,7 @@ test("DEADLIFT_SECRET is random per Environment, and the same across redeploys",
   expect(redeployed).toBe(first);
 });
 
-// Skipped until the destroy operation lands (#6): then un-skip it.
-test.skip("DEADLIFT_SECRET is new after the Environment is destroyed and deployed again", async () => {
+test("DEADLIFT_SECRET is new after the Environment is destroyed and deployed again", async () => {
   const server = await harness.server();
   const app = server.apps.a.name;
   const template = await templateWithEnvironment({ SECRET: "${DEADLIFT_SECRET}" });
