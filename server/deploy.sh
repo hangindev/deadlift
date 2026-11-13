@@ -594,7 +594,7 @@ promote_previous() {
 
 # Rolls the Dev Environment back to its previous version, starting it on today's data.
 rollback_dev() {
-  local dir=$state/apps/$app/environments/dev url
+  local dir=$state/apps/$app/environments/dev url why
   local previous=$state/apps/$app/environments/dev/previous
   project=deadlift-$app-dev
   url=$(sed -n 's/^DEADLIFT_URL=//p' "$dir/vars.env")
@@ -603,7 +603,16 @@ rollback_dev() {
   echo "Stopping dev to start its previous version"
   project_containers stop
   echo "Starting dev's previous version on today's data"
-  start_environment "$previous" "$routed"
+  if ! start_environment "$previous" "$routed"; then
+    why=$(tail -n 1 "$delivery/up.log")
+    echo "Starting dev's current version again"
+    project_containers stop || true
+    if ! restart_version "$dir"; then
+      project_containers stop || true
+      fail "dev's previous version didn't start on today's data ($why), and its current version didn't start again either ($(tail -n 1 "$delivery/up.log")), so Dev is stopped"
+    fi
+    refuse "dev's previous version didn't start on today's data: $why. Rollback was refused, and Dev is up on its current version again, with its data as it was, at $url. To roll back to the data from before the current version was deployed, discarding what's been written since, run it again with --discard-newer-data, which keeps a Volume Snapshot of today's data first"
+  fi
   promote_previous
 
   output environment dev

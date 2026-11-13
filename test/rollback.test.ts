@@ -55,4 +55,20 @@ describe("rollback dev", () => {
     expect(await get(server.devPort("a"), "/env/RELEASE")).toBe("first");
     expect(await get(server.devPort("a"), "/note")).toBe("written today");
   });
+
+  test("is refused, naming --discard-newer-data, and starts the current version again when the previous one isn't healthy on today's data", async () => {
+    const server = await harness.server();
+    await deployDev(server, 1);
+    // Version 2 migrates the data to its schema, which version 1's migration refuses.
+    await deployDev(server, 2);
+    await putNote(server.devPort("a"), "written on v2");
+
+    const result = await rollback(server, "dev");
+
+    expect(result.code, result.output).toBe(2);
+    expect(result.outcome).toBe("failed");
+    expect(result.reason).toMatch(/^deadlift: .*--discard-newer-data/);
+    expect(await get(server.devPort("a"), "/version")).toBe("2");
+    expect(await get(server.devPort("a"), "/note")).toBe("written on v2");
+  });
 });
