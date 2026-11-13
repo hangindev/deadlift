@@ -60,6 +60,7 @@ else
   fi
 fi
 
+# shellcheck disable=SC2016 # A pattern below matches bootstrap's remote command, $d unexpanded.
 case $command in
   true) ;;
   *'"$d/bootstrap.sh"'*)

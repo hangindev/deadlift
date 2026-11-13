@@ -111,7 +111,7 @@ ask() {
   current=$(_existing "$key" || true)
   # Readline needs the colour codes wrapped in \001..\002 to place the cursor.
   p="  $s$BOLD$e$prompt$s$RESET$e "
-  [[ -n "$current" ]] && p+="$s$DIM$e[Enter keeps current]$s$RESET$e "
+  [[ -n "$current" ]] && p+="$s$DIM${e}[Enter keeps current]$s$RESET$e "
   read -e -r -p "$p" input || rc=1
   if (( rc )) && [[ -z "$input" ]]; then return 1; fi
   [[ -z "$input" && -n "$current" ]] && input="$current"
@@ -119,6 +119,7 @@ ask() {
 }
 
 # ask_secret KEY "Prompt" is like ask, but input is hidden.
+# shellcheck disable=SC2317 # A library helper this wizard does not call.
 ask_secret() {
   local key="$1" prompt="$2" current input rc=0
   current=$(_existing "$key" || true)
@@ -152,6 +153,7 @@ write_env() {
 
 # set_secret NAME VALUE sets a GitHub Actions repo secret via gh. Falls back
 # to a warning (and records it) if gh is unavailable or unauthenticated.
+# shellcheck disable=SC2317 # A library helper this wizard does not call.
 set_secret() {
   local name="$1" value="$2"
   if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
@@ -166,6 +168,7 @@ set_secret() {
 }
 
 # set_var NAME VALUE sets a GitHub Actions repo variable (non-secret).
+# shellcheck disable=SC2317 # A library helper this wizard does not call.
 set_var() {
   local name="$1" value="$2"
   if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
@@ -246,6 +249,7 @@ tailnet_has_server() {
 
 # Runs `deadlift server bootstrap` over whichever route answers: the tailnet once the Server has
 # joined it, otherwise the public address.
+# shellcheck disable=SC2317 # Called through until_it_works.
 run_bootstrap() {
   local host=$SERVER_IP
   if tailnet_ready; then host=$(server_host); fi
