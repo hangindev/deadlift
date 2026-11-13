@@ -82,7 +82,7 @@ install_file() {
   local mode=$1 source=$2 target=$3
   changed=''
   if [[ -f $target && ! -L $target ]] && cmp -s "$source" "$target" &&
-    [[ $(stat -c '%a %U %G' "$target") == "$mode root root" ]]; then
+    [[ $(stat -c '%a %U %G' "$target") == "${mode#0} root root" ]]; then
     return
   fi
   install -m "$mode" -o root -g root "$source" "$target.new"

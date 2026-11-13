@@ -82,7 +82,8 @@ describe("deadlift server bootstrap", () => {
     const result = await bootstrap();
 
     expect(result.code, result.output).toBe(0);
-    expect(result.output.trim().split("\n").at(-1)).toMatch(/^deadlift: /);
+    const reasons = result.output.split("\n").filter((line) => line.startsWith("deadlift: "));
+    expect(reasons.at(-1)).toMatch(/is a Server/);
     // The daemon really remaps users, so root in a container is unprivileged on the host.
     expect(await ok("docker", "info", "--format", "{{json .SecurityOptions}}")).toMatch(
       /name=userns/,
