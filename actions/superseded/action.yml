@@ -23,7 +23,7 @@ outputs:
     description: The branch's head commit, as GitHub has it now.
     value: ${{ steps.superseded.outputs.head }}
   reason:
-    description: Why, as one line starting `deadlift: `.
+    description: "Why, as one line starting `deadlift: `."
     value: ${{ steps.superseded.outputs.reason }}
 runs:
   using: composite

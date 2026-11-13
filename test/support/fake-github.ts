@@ -5,6 +5,7 @@ import { spawnSync } from "node:child_process";
 import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { type ActionRun, parseOutputFile, runAction } from "./composite-action.ts";
 
 export interface PackageVersion {
   id: number;
@@ -29,6 +30,8 @@ export interface GitHubState {
   owners?: Record<string, "User" | "Organization">;
   /** Owner login to package name (as GHCR names it, e.g. `shop/web`) to its versions. */
   packages?: Record<string, Record<string, PackageVersion[]>>;
+  /** The most items GitHub returns per page, 100 by default; set it lower to test paging. */
+  maxPerPage?: number;
   /** Requests that fail, matched by method and the start of the path. */
   failures?: { method: string; pathPrefix: string; status?: number }[];
 }
@@ -75,19 +78,21 @@ export function fakeGitHub(initial: GitHubState) {
         status: result.status,
         stdout: result.stdout,
         stderr: result.stderr,
-        outputs: parseOutputs(readFileSync(outputFile, "utf8")),
+        outputs: parseOutputFile(readFileSync(outputFile, "utf8")),
       };
+    },
+    /** Runs a composite action from the repo, with this fake's `gh` first on PATH. */
+    runAction(
+      action: string,
+      inputs: Record<string, string>,
+      github: Record<string, string> = {},
+    ): ActionRun {
+      return runAction(action, {
+        inputs,
+        github: { token: "fake-token", ...github },
+        env: { PATH: `${dir}:${process.env.PATH}`, HOME: dir, FAKE_GITHUB_STATE: statePath },
+      });
     },
     cleanup: () => rmSync(dir, { recursive: true, force: true }),
   };
-}
-
-/** Parses the `key=value` lines an action's script wrote to $GITHUB_OUTPUT. */
-function parseOutputs(file: string): Record<string, string> {
-  return Object.fromEntries(
-    file
-      .split("\n")
-      .filter((line) => line.includes("="))
-      .map((line) => [line.slice(0, line.indexOf("=")), line.slice(line.indexOf("=") + 1)]),
-  );
 }

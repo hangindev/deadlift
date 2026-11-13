@@ -90,6 +90,37 @@ describe("superseded", () => {
     expect(run.stderr).toMatch(/^deadlift: couldn't compare 1{40} with main's head 3{40}/m);
   });
 
+  describe("as an action", () => {
+    const action = "actions/superseded";
+    const context = { sha: c1, repository: repo };
+
+    it("checks the workflow's own commit against main by default", () => {
+      const fake = github({ main: c3 });
+
+      const run = fake.runAction(action, {}, context);
+
+      expect(run.status, run.stderr).toBe(0);
+      expect(run.outputs).toMatchObject({ superseded: "true", head: c3 });
+      expect(run.outputs.reason).toMatch(/^deadlift: main has moved past/);
+    });
+
+    it("checks the commit and branch it's given", () => {
+      const fake = github({ main: c3, develop: c2 });
+
+      const run = fake.runAction(action, { branch: "develop", commit: c2 }, context);
+
+      expect(run.status, run.stderr).toBe(0);
+      expect(run.outputs).toMatchObject({ superseded: "false", head: c2 });
+    });
+
+    it("fails the step when GitHub can't say", () => {
+      const run = github({ main: c3 }).runAction(action, { branch: "trunk" }, context);
+
+      expect(run.status).toBe(1);
+      expect(run.outputs.superseded).toBe("");
+    });
+  });
+
   it.each([
     ["no commit", ["main"]],
     ["a commit that isn't a SHA", ["main", "HEAD~1"]],
