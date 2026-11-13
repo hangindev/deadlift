@@ -130,3 +130,44 @@ describe("the watchdog", () => {
     expect(result.code, result.output).toBe(0);
   });
 });
+
+describe("pruning images after each deploy", () => {
+  test("Dev keeps its current and previous versions' images, and older ones are removed", async () => {
+    const server = await harness.server();
+    for (const version of [1, 2, 3]) {
+      const result = await deploy(server, "a", "dev", version);
+      expect(result.outcome, result.output).toBe("done");
+    }
+
+    expect(await server.hasImage(await harness.image("healthy", 1))).toBe(false);
+    expect(await server.hasImage(await harness.image("healthy", 2))).toBe(true);
+    expect(await server.hasImage(await harness.image("healthy", 3))).toBe(true);
+  });
+
+  test("an image stays while any Environment of any App uses it, and goes after the last one", async () => {
+    const server = await harness.server();
+    await deploy(server, "a", "feature-first", 1);
+    await deploy(server, "b", "dev", 1);
+    for (const version of [2, 3]) await deploy(server, "a", "dev", version);
+    const v1 = await harness.image("healthy", 1);
+    expect(await server.hasImage(v1)).toBe(true);
+
+    await server.deliver(server.apps.a.name, ["destroy", "feature-first"]);
+    for (const version of [2, 3]) await deploy(server, "b", "dev", version);
+
+    expect(await server.hasImage(v1)).toBe(false);
+  });
+
+  test("a failed Dev deploy's image is removed, and Dev's running version keeps its own", async () => {
+    const server = await harness.server();
+    await deploy(server, "a", "dev", 1);
+
+    const failed = await deploy(server, "a", "dev", 2, "unhealthy");
+
+    expect(failed.outcome, failed.output).toBe("failed");
+    expect(failed.reason).toMatch(/Recovery succeeded/);
+    expect(await server.hasImage(await harness.image("unhealthy", 2))).toBe(false);
+    expect(await server.hasImage(await harness.image("healthy", 1))).toBe(true);
+    expect(await get(server.devPort("a"), "/version")).toBe("1");
+  });
+});

@@ -636,6 +636,84 @@ deploy_dev() {
   echo "deadlift: deployed dev, which is up at $url" >&2
 }
 
+# Prints the image references recorded under the directories $@: each Environment's versions
+# record theirs in vars.env, as DEADLIFT_IMAGE_<NAME>.
+recorded_images() {
+  local dir
+  for dir in "$@"; do
+    [[ -d $dir ]] || continue
+    find "$dir" -name vars.env -type f -exec sed -n 's/^DEADLIFT_IMAGE_[A-Z0-9_]*=//p' {} + || return 1
+  done
+}
+
+# Prints the repository of the image reference $1: without its digest or tag.
+repository_of() {
+  local ref=${1%%@*}
+  if [[ ${ref##*/} == *:* ]]; then ref=${ref%:*}; fi
+  echo "$ref"
+}
+
+# Removes the App's images that nothing needs any more. The App's images are those in the
+# repositories its Environments' versions, and this deploy, name. An image is needed while a
+# version of any App's Environment records it (Dev's current and previous, and each Feature
+# Environment's), while any container uses it, running or not, and always when it's the Volume
+# Snapshot helper. Errexit is off in here (see prune_after), so each step returns its own failure.
+prune_images() {
+  local -A needed=() repositories=()
+  local recorded ours containers used='' ref id repository listed name tag digest target
+  # Each listing is taken whole first: one that failed part way could make a needed image look
+  # unneeded.
+  recorded=$(recorded_images "$state/apps") || return 1
+  ours=$(recorded_images "$state/apps/$app/environments") || return 1
+  containers=$(docker container ls --all --quiet) || return 1
+  if [[ -n $containers ]]; then
+    # A container removed since it was listed fails the inspect, but uses no image any more, so
+    # the others' answers are enough. Docker also refuses to remove an image a container uses.
+    # shellcheck disable=SC2086 # One ID per word.
+    used=$(docker container inspect --format '{{.Image}}' $containers 2>/dev/null) || true
+  fi
+
+  while IFS= read -r ref; do
+    if [[ -z $ref ]]; then continue; fi
+    needed[$ref]=yes
+    # Not on the Server is fine: nothing to keep.
+    if id=$(docker image inspect --format '{{.Id}}' "$ref" 2>/dev/null); then needed[$id]=yes; fi
+  done <<<"$recorded"$'\n'"$snapshot_image"
+  while IFS= read -r id; do
+    if [[ -n $id ]]; then needed[$id]=yes; fi
+  done <<<"$used"
+  while IFS= read -r ref; do
+    if [[ -n $ref ]]; then repositories[$(repository_of "$ref")]=yes; fi
+  done < <(echo "$ours" && printf '%s\n' "${images[@]}")
+
+  for repository in "${!repositories[@]}"; do
+    listed=$(docker image ls --no-trunc --format '{{.Repository}} {{.Tag}} {{.Digest}} {{.ID}}' \
+      "$repository") || return 1
+    while read -r name tag digest id; do
+      if [[ -z $id || -n ${needed[$id]:-} || -n ${needed[$name:$tag]:-} ]]; then continue; fi
+      if [[ $tag != '<none>' ]]; then
+        target=$name:$tag
+      elif [[ $digest != '<none>' ]]; then
+        target=$name@$digest
+      else
+        continue
+      fi
+      docker image rm "$target" >/dev/null || return 1
+      echo "Removed the image $target, which no Environment uses"
+    done <<<"$listed"
+  done
+}
+
+# The EXIT trap of every deploy, once it holds the Server's lock, so the App's images are pruned
+# whatever its outcome. A failed prune is only a warning: the deploy's exit code and its reason,
+# the last `deadlift: ` line, stay as they were.
+prune_after() {
+  local status=$?
+  prune_images ||
+    echo "Warning: couldn't remove every image no Environment uses. The next deploy tries again" >&2
+  exit "$status"
+}
+
 op_deploy() {
   env=${1:-}
   shift || true
@@ -658,6 +736,7 @@ op_deploy() {
   esac
   read_app
   take_lock
+  trap prune_after EXIT
   if [[ $env == dev ]]; then deploy_dev; else deploy_feature; fi
 }
 
