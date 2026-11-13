@@ -92,6 +92,7 @@ describe("deadlift server bootstrap", () => {
     for (const [installed, source] of [
       ["/usr/local/sbin/deadlift-entry", "server/entry.sh"],
       ["/usr/local/lib/deadlift/deploy.sh", "server/deploy.sh"],
+      ["/usr/local/lib/deadlift/template.sh", "server/template.sh"],
     ] as const) {
       expect(await ok("stat", "--format", "%U:%G %a", installed)).toBe("root:root 755");
       expect(await readFile(installed, "utf8")).toBe(await readFile(join(repo, source), "utf8"));

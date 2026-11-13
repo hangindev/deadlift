@@ -21,8 +21,9 @@
 #   - The firewall for containers, firewall.sh, at /usr/local/lib/deadlift/firewall.sh, applied
 #     now and by deadlift-firewall.service at every boot before Docker starts (see firewall.sh).
 #   - The entry command, /usr/local/sbin/deadlift-entry, and the deploy script it runs,
-#     /usr/local/lib/deadlift/deploy.sh, owned by root. `deadlift app add` gives each App's deploy
-#     user one sudo rule for the entry command.
+#     /usr/local/lib/deadlift/deploy.sh, with the template check, template.sh, beside it, all
+#     owned by root. `deadlift app add` gives each App's deploy user one sudo rule for the entry
+#     command. jq, and python3 with PyYAML, which they use.
 #   - /srv/deadlift, only for root: the Server's lock, the Server registry (apps/) and the
 #     Server-wide settings (settings, below).
 #
@@ -105,8 +106,10 @@ install_prerequisites() {
   for tool in jq curl; do
     command -v "$tool" >/dev/null || missing+=("$tool")
   done
+  # PyYAML, for template.sh to read a template's YAML before Compose does.
+  python3 -I -c 'import yaml' 2>/dev/null || missing+=(python3 python3-yaml)
   if ((${#missing[@]})); then apt_install ca-certificates "${missing[@]}"; fi
-  echo "jq and curl are installed"
+  echo "jq, curl and python3 with PyYAML are installed"
 }
 
 # Turns on userns-remap in Docker's config, keeping what else it holds. Done before Docker is
@@ -169,6 +172,8 @@ install_scripts() {
   echo "$(installed_or_kept) the entry command, $entry_command"
   install_file 0755 "$here/deploy.sh" "$lib/deploy.sh"
   echo "$(installed_or_kept) the deploy script, $lib/deploy.sh"
+  install_file 0755 "$here/template.sh" "$lib/template.sh"
+  echo "$(installed_or_kept) the template check beside it, $lib/template.sh"
   install_file 0755 "$here/firewall.sh" "$lib/firewall.sh"
 }
 
@@ -241,7 +246,7 @@ setup_state() {
 }
 
 [[ $EUID -eq 0 ]] || refuse "bootstrap needs root"
-for file in entry.sh deploy.sh firewall.sh; do
+for file in entry.sh deploy.sh template.sh firewall.sh; do
   [[ -r $here/$file ]] || refuse "$file isn't beside bootstrap.sh. Run it through \`deadlift server bootstrap\`, which sends all of server/"
 done
 # shellcheck source=/dev/null
