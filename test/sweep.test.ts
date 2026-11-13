@@ -1,7 +1,7 @@
 // The Sweep: destroying every Feature Environment of an App that isn't in a list to keep, on its
 // own or first thing in a Feature deploy.
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "vitest";
-import { get, startHarness } from "./harness.ts";
+import { get, putNote, startHarness } from "./harness.ts";
 
 let harness: Awaited<ReturnType<typeof startHarness>>;
 beforeAll(async () => {
@@ -196,6 +196,44 @@ describe("deploy feature-<key> --keep <keys>", () => {
 });
 
 describe("what a Sweep never touches", () => {
+  test("the Dev Environment, or its data", async () => {
+    const server = await harness.server();
+    const app = server.apps.a.name;
+    const dev = await server.deliver(app, ["deploy", "dev", "--image", `web=${await harness.image()}`]);
+    expect(dev.outcome, dev.output).toBe("done");
+    await putNote(server.devPort("a"), "kept");
+    await deploy(server, "first");
+
+    const result = await sweep(server, "--keep-none");
+
+    expect(result.outcome, result.output).toBe("done");
+    expect(result.swept).toBe("first");
+    expect(await get(server.devPort("a"), "/version")).toBe("1");
+    expect(await get(server.devPort("a"), "/note")).toBe("kept");
+    expect(await server.serveMappings()).toEqual([
+      { service: `svc:${app}`, port: 443, target: `http://127.0.0.1:${server.devPort("a")}` },
+    ]);
+  });
+
+  test("deploy dev refuses --keep and --keep-none, exit 2, sweeping nothing", async () => {
+    const server = await harness.server();
+    await deploy(server, "first");
+
+    for (const keep of [["--keep", "other"], ["--keep-none"]]) {
+      const result = await server.deliver(server.apps.a.name, [
+        "deploy",
+        "dev",
+        "--image",
+        `web=${await harness.image()}`,
+        ...keep,
+      ]);
+
+      expect(result.code, result.output).toBe(2);
+      expect(result.reason).toMatch(/^deadlift: .*Feature deploy/);
+    }
+    expect(await get(server.slotPort("a", 1), "/version")).toBe("1");
+  });
+
   test("another App's Feature Environments, even with keys the App doesn't keep", async () => {
     const server = await harness.server();
     const b = server.apps.b.name;
