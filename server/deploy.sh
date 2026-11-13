@@ -592,32 +592,82 @@ promote_previous() {
   rm -rf "${previous:?}"
 }
 
-# Rolls the Dev Environment back to its previous version, starting it on today's data.
+# Rolls the Dev Environment back to its previous version, which becomes its current version: one
+# step only. Nothing stops until the previous version's images are on the Server. It starts on
+# today's data, and is kept when it's healthy. When it isn't, the current version starts again
+# and Rollback is refused, unless $discard says to discard newer data: then a Volume Snapshot of
+# today's data is taken, and the previous version starts on the snapshot from before the current
+# version was first deployed. If that fails too, today's data and the current version go back.
 rollback_dev() {
-  local dir=$state/apps/$app/environments/dev url why
+  local dir=$state/apps/$app/environments/dev url why before=''
   local previous=$state/apps/$app/environments/dev/previous
+  local snapshots=$state/apps/$app/environments/dev/snapshots snapshot
   project=deadlift-$app-dev
   url=$(sed -n 's/^DEADLIFT_URL=//p' "$dir/vars.env")
-  routed=$(compose "$previous" config --format json | jq -r '."x-deadlift".route | split(":")[0]')
+  config=$(compose "$previous" config --format json 2>"$delivery/config.err") ||
+    fail "couldn't read dev's previous version: $(tail -n 1 "$delivery/config.err"). Nothing was changed"
+  routed=$(jq -r '."x-deadlift".route | split(":")[0]' <<<"$config")
+  pull_images
+  if [[ -n $discard ]]; then
+    if [[ -f $dir/snapshot ]]; then before=$(<"$dir/snapshot"); fi
+    [[ -n $before && -d $snapshots/$before ]] ||
+      fail "the Volume Snapshot from before dev's current version was deployed is gone, so --discard-newer-data can't go back to it. Nothing was changed"
+    pull_snapshot_image
+  fi
 
   echo "Stopping dev to start its previous version"
-  project_containers stop
+  if ! project_containers stop; then
+    restart_version "$dir" ||
+      fail "couldn't stop dev to start its previous version, and its current version didn't start again, so Dev is stopped"
+    fail "couldn't stop dev to start its previous version, so nothing was rolled back. Dev is up on its current version, at $url"
+  fi
   echo "Starting dev's previous version on today's data"
-  if ! start_environment "$previous" "$routed"; then
-    why=$(tail -n 1 "$delivery/up.log")
+  if start_environment "$previous" "$routed"; then
+    promote_previous
+    output environment dev
+    output url "$url"
+    echo "deadlift: rolled dev back to its previous version, on today's data, which is up at $url" >&2
+    return
+  fi
+  why=$(tail -n 1 "$delivery/up.log")
+  project_containers stop || true
+
+  if [[ -z $discard ]]; then
     echo "Starting dev's current version again"
-    project_containers stop || true
     if ! restart_version "$dir"; then
       project_containers stop || true
       fail "dev's previous version didn't start on today's data ($why), and its current version didn't start again either ($(tail -n 1 "$delivery/up.log")), so Dev is stopped"
     fi
     refuse "dev's previous version didn't start on today's data: $why. Rollback was refused, and Dev is up on its current version again, with its data as it was, at $url. To roll back to the data from before the current version was deployed, discarding what's been written since, run it again with --discard-newer-data, which keeps a Volume Snapshot of today's data first"
   fi
-  promote_previous
 
-  output environment dev
-  output url "$url"
-  echo "deadlift: rolled dev back to its previous version, on today's data, which is up at $url" >&2
+  echo "Taking a Volume Snapshot of dev's data as it is today"
+  if ! take_snapshot; then
+    restart_version "$dir" ||
+      fail "dev's previous version didn't start on today's data ($why), and a Volume Snapshot of today's data couldn't be taken, so nothing was discarded, and Dev is stopped"
+    fail "dev's previous version didn't start on today's data ($why), and a Volume Snapshot of today's data couldn't be taken, so nothing was discarded. Dev is up on its current version, at $url"
+  fi
+  echo "Putting back the Volume Snapshot from before dev's current version, $before"
+  project_containers rm --force || true
+  if ! restore_snapshot "$before"; then
+    why="the Volume Snapshot from before the current version, $before, couldn't be put back"
+  elif ! start_environment "$previous" "$routed"; then
+    why="it didn't start on the data from before the current version either: $(tail -n 1 "$delivery/up.log")"
+  else
+    promote_previous
+    prune_snapshots
+    output environment dev
+    output url "$url"
+    echo "deadlift: rolled dev back to its previous version, on its data from before the current version, which is up at $url. Today's data is kept in the Volume Snapshot $snapshot" >&2
+    return
+  fi
+  echo "Putting back today's data and dev's current version"
+  project_containers rm --force || true
+  if ! restore_snapshot "$snapshot" || ! restart_version "$dir"; then
+    project_containers stop || true
+    fail "dev's previous version didn't start on today's data, and $why. Putting back today's data and the current version failed too, so Dev is stopped. Today's data is in the Volume Snapshot $snapshot"
+  fi
+  fail "dev's previous version didn't start on today's data, and $why. Nothing was rolled back: Dev is up on its current version again, with today's data, at $url"
 }
 
 op_deploy() {
@@ -648,6 +698,13 @@ op_deploy() {
 op_rollback() {
   env=${1:-}
   shift || true
+  discard=''
+  while (($#)); do
+    case $1 in
+      --discard-newer-data) discard=yes && shift ;;
+      *) usage "unknown argument '$1' for rollback" ;;
+    esac
+  done
   read_app
   take_lock
   rollback_dev

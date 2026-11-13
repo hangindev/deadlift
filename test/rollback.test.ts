@@ -71,4 +71,26 @@ describe("rollback dev", () => {
     expect(await get(server.devPort("a"), "/version")).toBe("2");
     expect(await get(server.devPort("a"), "/note")).toBe("written on v2");
   });
+
+  test("with --discard-newer-data, keeps a Volume Snapshot of today's data, then starts the previous version on the data from before the current one", async () => {
+    const server = await harness.server();
+    const app = server.apps.a.name;
+    await deployDev(server, 1);
+    await putNote(server.devPort("a"), "written on v1");
+    await deployDev(server, 2);
+    await putNote(server.devPort("a"), "written on v2");
+    const before = await server.volumeSnapshots(app);
+
+    const result = await rollback(server, "dev", "--discard-newer-data");
+
+    expect(result.code, result.output).toBe(0);
+    expect(result.outcome).toBe("done");
+    expect(result.reason).toMatch(/^deadlift: rolled dev back/);
+    expect(await get(server.devPort("a"), "/version")).toBe("1");
+    expect(await get(server.devPort("a"), "/note")).toBe("written on v1");
+    const taken = (await server.volumeSnapshots(app)).filter((name) => !before.includes(name));
+    expect(taken).toHaveLength(1);
+    expect(await server.fileInVolumeSnapshot(app, taken[0] ?? "", "note")).toBe("written on v2");
+    expect(result.reason).toContain(taken[0]);
+  });
 });
