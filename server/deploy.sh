@@ -577,6 +577,40 @@ deploy_dev() {
   echo "deadlift: deployed dev, which is up at $url" >&2
 }
 
+# Promotes Dev's previous version, now running, to its current version, and forgets the one
+# rolled back from: Rollback goes back one step only.
+promote_previous() {
+  local file
+  for file in "${version_files[@]}"; do
+    if [[ -f $previous/$file ]]; then
+      cp "$previous/$file" "$dir/$file.new"
+      mv "$dir/$file.new" "$dir/$file"
+    else
+      rm -f "$dir/$file"
+    fi
+  done
+  rm -rf "${previous:?}"
+}
+
+# Rolls the Dev Environment back to its previous version, starting it on today's data.
+rollback_dev() {
+  local dir=$state/apps/$app/environments/dev url
+  local previous=$state/apps/$app/environments/dev/previous
+  project=deadlift-$app-dev
+  url=$(sed -n 's/^DEADLIFT_URL=//p' "$dir/vars.env")
+  routed=$(compose "$previous" config --format json | jq -r '."x-deadlift".route | split(":")[0]')
+
+  echo "Stopping dev to start its previous version"
+  project_containers stop
+  echo "Starting dev's previous version on today's data"
+  start_environment "$previous" "$routed"
+  promote_previous
+
+  output environment dev
+  output url "$url"
+  echo "deadlift: rolled dev back to its previous version, on today's data, which is up at $url" >&2
+}
+
 op_deploy() {
   env=${1:-}
   shift || true
@@ -600,6 +634,14 @@ op_deploy() {
   read_app
   take_lock
   if [[ $env == dev ]]; then deploy_dev; else deploy_feature; fi
+}
+
+op_rollback() {
+  env=${1:-}
+  shift || true
+  read_app
+  take_lock
+  rollback_dev
 }
 
 op_destroy() {
@@ -631,6 +673,7 @@ done
 
 case ${1:-} in
   deploy) shift && op_deploy "$@" ;;
+  rollback) shift && op_rollback "$@" ;;
   destroy) shift && op_destroy "$@" ;;
   *) usage "'${1:-}' isn't an operation" ;;
 esac

@@ -1,0 +1,58 @@
+// Rollback: the Dev Environment goes back one version on request. It keeps today's data when the
+// previous version is healthy on it, and discards it, keeping a Volume Snapshot of it first, only
+// when told to with --discard-newer-data.
+import { afterAll, afterEach, beforeAll, describe, expect, test } from "vitest";
+import { exampleTemplate, get, putNote, startHarness } from "./harness.ts";
+
+let harness: Awaited<ReturnType<typeof startHarness>>;
+beforeAll(async () => {
+  harness = await startHarness();
+});
+afterEach(() => harness.removeServers());
+afterAll(() => harness.remove());
+
+type Server = Awaited<ReturnType<typeof harness.server>>;
+
+/** The example App's template with `RELEASE` set on its web service, so a test can tell two
+ * versions of the same image apart through `/env/RELEASE`. */
+async function templateForRelease(release: string): Promise<string> {
+  return (await exampleTemplate()).replace(
+    "  web:\n    image: ${DEADLIFT_IMAGE_WEB}\n",
+    `  web:\n    image: \${DEADLIFT_IMAGE_WEB}\n    environment:\n      RELEASE: "${release}"\n`,
+  );
+}
+
+/** Deploys version `version` of the example App's healthy image to app a's Dev Environment. */
+async function deployDev(server: Server, version: number, options: { template?: string } = {}) {
+  const result = await server.deliver(
+    server.apps.a.name,
+    ["deploy", "dev", "--image", `web=${await harness.image("healthy", version)}`],
+    options,
+  );
+  expect(result.outcome, result.output).toBe("done");
+}
+
+function rollback(server: Server, ...args: string[]) {
+  return server.deliver(server.apps.a.name, ["rollback", ...args]);
+}
+
+describe("rollback dev", () => {
+  test("starts the previous version on today's data, and keeps it when it's healthy", async () => {
+    const server = await harness.server();
+    const app = server.apps.a.name;
+    // Two releases of the same image: the previous one is healthy on today's data.
+    await deployDev(server, 1, { template: await templateForRelease("first") });
+    await deployDev(server, 1, { template: await templateForRelease("second") });
+    await putNote(server.devPort("a"), "written today");
+
+    const result = await rollback(server, "dev");
+
+    expect(result.code, result.output).toBe(0);
+    expect(result.outcome).toBe("done");
+    expect(result.environment).toBe("dev");
+    expect(result.url).toBe(`https://${app}.tailtest.ts.net/`);
+    expect(result.reason).toMatch(/^deadlift: rolled dev back/);
+    expect(await get(server.devPort("a"), "/env/RELEASE")).toBe("first");
+    expect(await get(server.devPort("a"), "/note")).toBe("written today");
+  });
+});
