@@ -1,0 +1,20 @@
+// The example App's web server, on port 3000: `/health` passes unless the image was built with
+// HEALTH=fail, and `/version` names the image, so a test can tell which version is live.
+import { createServer } from "node:http";
+
+const healthy = process.env.EXAMPLE_HEALTH !== "fail";
+const version = process.env.EXAMPLE_VERSION ?? "";
+
+const server = createServer((request, response) => {
+  if (request.url === "/health") {
+    response.writeHead(healthy ? 200 : 503).end(healthy ? "ok" : "failing on purpose");
+  } else if (request.url === "/version") {
+    response.end(version);
+  } else {
+    response.writeHead(404).end();
+  }
+});
+server.listen(3000, "0.0.0.0");
+
+// As PID 1, Node has no default handler, so without this Docker would wait and then kill it.
+process.on("SIGTERM", () => process.exit(0));
