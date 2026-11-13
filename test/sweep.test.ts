@@ -121,6 +121,80 @@ describe("the guard on an empty keep list", () => {
   });
 });
 
+describe("deploy feature-<key> --keep <keys>", () => {
+  test("sweeps unlisted Feature Environments first, so a full set of stale ones doesn't skip it", async () => {
+    const server = await harness.server({ slots: 2 });
+    const app = server.apps.a.name;
+    await deploy(server, "stale");
+    await deploy(server, "open");
+
+    const result = await deploy(server, "new", ["--keep", "open,new"]);
+
+    expect(result.code, result.output).toBe(0);
+    expect(result.outcome).toBe("done");
+    expect(result.environment).toBe("feature-new");
+    expect(result.swept).toBe("stale");
+    expect(result.reason).toMatch(/^deadlift: deployed feature-new.*swept feature-stale/);
+    // The stale one's Slot, at its address.
+    expect(result.url).toBe(`https://${app}.tailtest.ts.net:10001/`);
+    expect(await get(server.slotPort("a", 1), "/version")).toBe("1");
+    expect(await get(server.slotPort("a", 2), "/version")).toBe("1");
+    expect(await server.containers(app)).not.toMatch(/feature-stale/);
+  });
+
+  test("always keeps the Environment it deploys, even when it isn't listed", async () => {
+    const server = await harness.server();
+    await deploy(server, "first");
+    await deploy(server, "second");
+
+    const result = await deploy(server, "second", ["--keep-none"]);
+
+    expect(result.outcome, result.output).toBe("done");
+    expect(result.swept).toBe("first");
+    expect(result.url).toMatch(/:10002\/$/);
+    expect(await get(server.slotPort("a", 2), "/version")).toBe("1");
+  });
+
+  test("is skipped, sweeping nothing, when every Slot is held by kept keys", async () => {
+    const server = await harness.server({ slots: 1 });
+    await deploy(server, "first");
+
+    const result = await deploy(server, "second", ["--keep", "first"]);
+
+    expect(result.outcome, result.output).toBe("skipped");
+    expect(result.swept).toBe("");
+    expect(await get(server.slotPort("a", 1), "/version")).toBe("1");
+  });
+
+  test("sweeps nothing when the template is refused", async () => {
+    const server = await harness.server();
+    await deploy(server, "stale");
+
+    const result = await server.deliver(
+      server.apps.a.name,
+      ["deploy", "feature-new", "--image", `web=${await harness.image()}`, "--keep", "new"],
+      { template: "services:\n  web:\n    image: ${DEADLIFT_IMAGE_WEB}\n" },
+    );
+
+    expect(result.code, result.output).toBe(2);
+    expect(result.swept).toBe("");
+    expect(await get(server.slotPort("a", 1), "/version")).toBe("1");
+  });
+
+  test("refuses an empty --keep, exit 2, sweeping and deploying nothing", async () => {
+    const server = await harness.server();
+    const app = server.apps.a.name;
+    await deploy(server, "stale");
+
+    const result = await deploy(server, "new", ["--keep", ""]);
+
+    expect(result.code, result.output).toBe(2);
+    expect(result.reason).toMatch(/^deadlift: .*--keep-none/);
+    expect(await server.containers(app)).not.toMatch(/feature-new/);
+    expect(await get(server.slotPort("a", 1), "/version")).toBe("1");
+  });
+});
+
 describe("what a Sweep never touches", () => {
   test("another App's Feature Environments, even with keys the App doesn't keep", async () => {
     const server = await harness.server();

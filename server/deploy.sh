@@ -6,7 +6,7 @@
 # the delivery.
 #
 # Usage:
-#   deploy.sh --app <app> --delivery <dir> deploy feature-<key> [--image <name>=<ref>]...
+#   deploy.sh --app <app> --delivery <dir> deploy feature-<key> [--image <name>=<ref>]... [--keep <keys> | --keep-none]
 #   deploy.sh --app <app> --delivery <dir> destroy feature-<key>
 #   deploy.sh --app <app> --delivery <dir> sweep --keep <keys> | --keep-none
 #
@@ -15,12 +15,15 @@
 #               job's registry token.
 #
 # Operations:
-#   deploy <environment> --image <name>=<ref>...
+#   deploy <environment> --image <name>=<ref>... [--keep <keys> | --keep-none]
 #       Deploys the delivered template to the Environment, with each image reaching the template
 #       as ${DEADLIFT_IMAGE_<NAME>}. A Feature Environment, feature-<key>, takes a free Slot of
 #       the App's, or the one its key already holds, and is skipped when none is free. A
 #       redeploy keeps the Environment's Slot, URL and volumes, and a failed one leaves it
-#       stopped.
+#       stopped. With --keep or --keep-none, a Feature deploy first sweeps the App as `sweep`
+#       does, always keeping the Environment it deploys, so Slots held by keys no longer kept
+#       are free for it. It sweeps only once the template is checked and the images pulled, and
+#       not at all when it's skipped.
 #
 #   destroy feature-<key>
 #       Removes the Feature Environment, its volumes and its Service mapping, and frees its
@@ -266,16 +269,19 @@ held_slots() {
   done | sort -n
 }
 
-# Sets slot to the Slot that $env holds, or the lowest free one. Skips when none is free.
+# Sets slot to the Slot that $env holds, or the lowest free one. With --keep or --keep-none, a
+# Slot held by a Feature Environment that isn't kept counts as free, since the Sweep before the
+# deploy frees it. Skips when none is free, having changed nothing.
 claim_slot() {
-  local held holders s
+  local held holders s holder
   if [[ -f $state/apps/$app/environments/$env/slot ]]; then
     slot=$(<"$state/apps/$app/environments/$env/slot")
     return
   fi
   held=$(held_slots)
   for ((s = 1; s <= slots; s++)); do
-    if ! grep -q "^$s " <<<"$held"; then
+    holder=$(sed -n "s/^$s //p" <<<"$held")
+    if [[ -z $holder ]] || { [[ -n $keep_given ]] && ! is_kept "$holder"; }; then
       slot=$s
       return
     fi
@@ -302,6 +308,8 @@ deploy_feature() {
   check_template "$next"
   write_override "$next" "$port"
   pull_images
+  # Only now, so a template refused or an image that can't be pulled sweeps nothing.
+  if [[ -n $keep_given ]]; then sweep_before_deploy; fi
 
   mkdir -p "$dir"
   cp "$next/compose.yaml" "$next/secrets.env" "$next/vars.env" "$next/secret" "$next/override.json" \
@@ -313,7 +321,7 @@ deploy_feature() {
     ! compose "$dir" up --detach --pull never --no-recreate --no-deps --wait \
       --wait-timeout "$health_timeout" "$routed" 2>&1 | tee "$log" >&2; then
     compose "$dir" stop >/dev/null 2>&1 || true
-    fail "$env didn't start: $(tail -n 1 "$log"). It's stopped, and the App's other Environments are as they were"
+    fail "$env didn't start: $(tail -n 1 "$log"). It's stopped, and the App's other Environments are as they were${swept[*]:+ after sweeping $(sentence "${swept[@]}")}"
   fi
   if ! tailscale serve --service="svc:$app" --https="$public" --bg "http://127.0.0.1:$port" >&2; then
     compose "$dir" stop >/dev/null 2>&1 || true
@@ -322,7 +330,20 @@ deploy_feature() {
 
   output environment "$env"
   output url "$url"
-  echo "deadlift: deployed $env, which is up at $url" >&2
+  echo "deadlift: deployed $env, which is up at $url${swept[*]:+, and swept $(sentence "${swept[@]}")}" >&2
+}
+
+# For a Feature deploy with --keep or --keep-none: sweeps the App, $env always kept. Fails if a
+# destroy that failed left the Slot claim_slot picked held.
+sweep_before_deploy() {
+  local holder
+  sweep_features
+  ((${#unswept[@]})) || return 0
+  holder=$(held_slots | sed -n "s/^$slot //p")
+  if [[ -n $holder && $holder != "$env" ]]; then
+    fail "couldn't destroy $holder (above) to free Slot $slot, so $env wasn't deployed${swept[*]:+. Swept $(sentence "${swept[@]}")}"
+  fi
+  echo "deadlift: couldn't destroy $(sentence "${unswept[@]}") (above), which the next Sweep tries again" >&2
 }
 
 # Removes the Slot's public port from the App's Service, if it's mapped. A Feature Environment
@@ -438,12 +459,25 @@ op_deploy() {
         images[${BASH_REMATCH[1]}]=${BASH_REMATCH[2]}
         shift 2
         ;;
+      --keep)
+        [[ $# -ge 2 ]] || usage "--keep needs the keys of the Feature Environments to keep"
+        read_keep "$2"
+        shift 2
+        ;;
+      --keep-none) read_keep_none && shift ;;
       *) usage "unknown argument '$1' for deploy" ;;
     esac
   done
   case $env in
-    feature-*) check_feature_key ;;
-    dev) refuse "deploying the Dev Environment isn't supported by this Server yet" ;;
+    feature-*)
+      check_feature_key
+      # The Environment being deployed is always kept.
+      keep+=("$env")
+      ;;
+    dev)
+      [[ -z $keep_given ]] || usage "--keep and --keep-none are for a Feature deploy, and dev is the Dev Environment"
+      refuse "deploying the Dev Environment isn't supported by this Server yet"
+      ;;
     *) usage "'$env' isn't an Environment: dev or feature-<key>" ;;
   esac
   read_app
