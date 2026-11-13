@@ -1,0 +1,107 @@
+name: deadlift deliver
+description: >-
+  Delivers one operation to an App's Server: joins the tailnet as an ephemeral node through
+  GitHub's OIDC token, sends the delivery over SSH as the App's deploy user, deadlift-<app>, and
+  leaves. Reports what happened as outputs and in the job summary, and fails the step when the
+  operation failed or was refused, but not when it was skipped. It knows nothing about pull
+  requests. The job needs `id-token: write` to join the tailnet, and `packages: read` for the
+  Server to pull the App's images with the job's token.
+inputs:
+  app:
+    description: The App, as `deadlift app add` named it.
+    required: true
+  server:
+    description: The Server's name on the tailnet, such as `deadlift-1`.
+    required: true
+  operation:
+    description: "`deploy`, `destroy`, `sweep` or `rollback`."
+    required: true
+  environment:
+    description: >-
+      The Environment to act on: `dev`, or `feature-<key>` with a key of up to 30 of a-z, 0-9 and
+      `-`. Not for `sweep`, which acts on every Feature Environment.
+    default: ""
+  images:
+    description: >-
+      For `deploy`: the App's images, one `<name>=<ref>` per line or separated by spaces, as
+      `build` outputs them. Each reaches the template as `${DEADLIFT_IMAGE_<NAME>}`.
+    default: ""
+  keep:
+    description: >-
+      For `deploy` of a Feature Environment and for `sweep`: the keys of the Feature Environments
+      to keep, separated by commas, spaces or newlines. The Sweep destroys every other one.
+    default: ""
+  keep-none:
+    description: "`true` to keep no Feature Environment, the only way an empty `keep` is accepted."
+    default: "false"
+  discard-newer-data:
+    description: >-
+      For `rollback`: `true` to roll back to the Volume Snapshot from before the current version
+      when the previous version isn't healthy with today's data, taking a snapshot of it first.
+    default: "false"
+  compose:
+    description: The App's Compose template, sent with `deploy`.
+    default: compose.yaml
+  oauth-client-id:
+    description: >-
+      The Client ID of the App's federated credential on the tailnet, which `deadlift app add`
+      printed. Usually `vars.TS_OAUTH_CLIENT_ID`.
+    required: true
+  audience:
+    description: The audience of that credential. Usually `vars.TS_AUDIENCE`.
+    required: true
+  registry-token:
+    description: >-
+      The token the Server pulls the App's images from GHCR with, for this delivery only. It's
+      removed from the Server afterwards.
+    default: ${{ github.token }}
+outputs:
+  outcome:
+    description: "`done`, `skipped` or `failed`."
+    value: ${{ steps.deliver.outputs.outcome }}
+  reason:
+    description: "What happened, as one line starting `deadlift: `."
+    value: ${{ steps.deliver.outputs.reason }}
+  url:
+    description: The Environment's address, when it has one.
+    value: ${{ steps.deliver.outputs.url }}
+  environment:
+    description: The Environment acted on.
+    value: ${{ steps.deliver.outputs.environment }}
+  swept:
+    description: The keys of the Feature Environments the Sweep destroyed, separated by commas.
+    value: ${{ steps.deliver.outputs.swept }}
+runs:
+  using: composite
+  steps:
+    # An ephemeral node, tagged as the App's CI, which the tailnet policy lets reach only the
+    # Server's SSH port, as the App's deploy user.
+    - uses: tailscale/github-action@064b10558093f38325e838ddea35486bdc6b1d5c # v4.4.0
+      with:
+        oauth-client-id: ${{ inputs.oauth-client-id }}
+        audience: ${{ inputs.audience }}
+        tags: tag:deadlift-ci-${{ inputs.app }}
+        ping: ${{ inputs.server }}
+    - id: deliver
+      shell: bash
+      env:
+        APP: ${{ inputs.app }}
+        SERVER: ${{ inputs.server }}
+        OPERATION: ${{ inputs.operation }}
+        ENVIRONMENT: ${{ inputs.environment }}
+        IMAGES: ${{ inputs.images }}
+        KEEP: ${{ inputs.keep }}
+        KEEP_NONE: ${{ inputs.keep-none }}
+        DISCARD_NEWER_DATA: ${{ inputs.discard-newer-data }}
+        COMPOSE: ${{ inputs.compose }}
+        DEADLIFT_REGISTRY_TOKEN: ${{ inputs.registry-token }}
+      run: |
+        args=(--server "$SERVER" --app "$APP" --compose "$COMPOSE" "$OPERATION")
+        if [[ -n $ENVIRONMENT ]]; then args+=("$ENVIRONMENT"); fi
+        read -ra images -d '' <<<"$IMAGES" || true # one per line or on one line
+        for image in "${images[@]}"; do args+=(--image "$image"); done
+        "$GITHUB_ACTION_PATH/deliver.sh" "${args[@]}"
+    # Also after a failure, so the job can join again, as the App's CI or anything else.
+    - if: always()
+      shell: bash
+      run: '"$GITHUB_ACTION_PATH/leave.sh"'
