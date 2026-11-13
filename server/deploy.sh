@@ -7,11 +7,12 @@
 #
 # Usage:
 #   deploy.sh --app <app> --delivery <dir> deploy dev|feature-<key> [--image <name>=<ref>]... [--keep <keys> | --keep-none]
+#   deploy.sh --app <app> --delivery <dir> rollback dev [--discard-newer-data]
 #   deploy.sh --app <app> --delivery <dir> destroy feature-<key>
 #   deploy.sh --app <app> --delivery <dir> sweep --keep <keys> | --keep-none
 #   deploy.sh watchdog
 #
-#   --app       The App, as the entry command worked it out. Never from a delivery's arguments.
+#   --app      The App, as the entry command worked it out. Never from a delivery's arguments.
 #   --delivery  The unpacked delivery: compose.yaml, the App's Compose template, and token, the
 #               job's registry token.
 #
@@ -36,6 +37,17 @@
 #
 #       After every deploy, whatever its outcome, the App's images that no Environment's version
 #       records, of any App, and no container uses are removed from the Server.
+#
+#   rollback dev [--discard-newer-data]
+#       Takes the Dev Environment back to its previous version, which becomes its current
+#       version, and is then refused until Dev has been deployed again: one step only. Only Dev
+#       has versions, so a Feature Environment is refused. The previous version's images are
+#       pulled, if the Server no longer has them, before anything stops. Then Dev stops and the
+#       previous version starts on today's data, and is kept when it's healthy. When it isn't,
+#       the current version starts again and Rollback is refused, unless --discard-newer-data is
+#       given: then a Volume Snapshot of today's data is taken, the Volume Snapshot from before
+#       the current version was first deployed is put back, and the previous version starts on
+#       it. If it still doesn't start, today's data and the current version are put back.
 #
 #   destroy feature-<key>
 #       Removes the Feature Environment, its volumes and its Service mapping, and frees its
@@ -134,6 +146,8 @@ declare -A images=()
 keep_given='' keep=()
 # What a Sweep destroyed, and what it couldn't.
 swept=() unswept=()
+# Set once a deploy holds the Server's lock: its App's images are to be pruned (prune_once).
+prune_pending=''
 
 usage() {
   echo "deadlift: $1" >&2
@@ -142,16 +156,19 @@ usage() {
 }
 
 refuse() {
+  prune_once
   echo "deadlift: $1" >&2
   exit 2
 }
 
 fail() {
+  prune_once
   echo "deadlift: $1" >&2
   exit 1
 }
 
 skip() {
+  prune_once
   echo "deadlift: $1" >&2
   exit 75
 }
@@ -412,6 +429,7 @@ deploy_feature() {
 
   output environment "$env"
   output url "$url"
+  prune_once
   echo "deadlift: deployed $env, which is up at $url${swept[*]:+, and swept $(sentence "${swept[@]}")}" >&2
 }
 
@@ -727,6 +745,7 @@ deploy_dev() {
 
   output environment dev
   output url "$url"
+  prune_once
   echo "deadlift: deployed dev, which is up at $url" >&2
 }
 
@@ -751,7 +770,7 @@ repository_of() {
 # repositories its Environments' versions, and this deploy, name. An image is needed while a
 # version of any App's Environment records it (Dev's current and previous, and each Feature
 # Environment's), while any container uses it, running or not, and always when it's the Volume
-# Snapshot helper. Errexit is off in here (see prune_after), so each step returns its own failure.
+# Snapshot helper. Errexit is off in here (see prune_once), so each step returns its own failure.
 prune_images() {
   local -A needed=() repositories=()
   local recorded ours containers used='' ref id repository listed name tag digest target
@@ -798,14 +817,118 @@ prune_images() {
   done
 }
 
-# The EXIT trap of every deploy, once it holds the Server's lock, so the App's images are pruned
-# whatever its outcome. A failed prune is only a warning: the deploy's exit code and its reason,
-# the last `deadlift: ` line, stay as they were.
-prune_after() {
-  local status=$?
-  prune_images ||
+# Prunes the App's images once a deploy holding the Server's lock has an outcome, whatever it is,
+# and before its reason is told, so the reason stays the last line. Only in the script itself,
+# never in a subshell. A failed prune is only a warning: the deploy's outcome stands.
+prune_once() {
+  [[ -n $prune_pending && $BASHPID == "$$" ]] || return 0
+  prune_pending=''
+  prune_images >&2 ||
     echo "Warning: couldn't remove every image no Environment uses. The next deploy tries again" >&2
+}
+
+# The EXIT trap of a deploy holding the Server's lock, for a way out that didn't prune, such as
+# a refused template whose reason template.sh gave: prunes without a word, keeping the exit code.
+prune_quietly() {
+  local status=$?
+  prune_once >/dev/null 2>&1 || true
   exit "$status"
+}
+
+# Promotes Dev's previous version, now running, to its current version, and forgets the one
+# rolled back from: Rollback goes back one step only.
+promote_previous() {
+  local file
+  for file in "${version_files[@]}"; do
+    if [[ -f $previous/$file ]]; then
+      cp "$previous/$file" "$dir/$file.new"
+      mv "$dir/$file.new" "$dir/$file"
+    else
+      rm -f "$dir/$file"
+    fi
+  done
+  rm -rf "${previous:?}"
+}
+
+# Rolls the Dev Environment back to its previous version, which becomes its current version: one
+# step only. Nothing stops until the previous version's images are on the Server. It starts on
+# today's data, and is kept when it's healthy. When it isn't, the current version starts again
+# and Rollback is refused, unless $discard says to discard newer data: then a Volume Snapshot of
+# today's data is taken, and the previous version starts on the snapshot from before the current
+# version was first deployed. If that fails too, today's data and the current version go back.
+rollback_dev() {
+  local dir=$state/apps/$app/environments/dev url why before=''
+  local previous=$state/apps/$app/environments/dev/previous
+  local snapshots=$state/apps/$app/environments/dev/snapshots snapshot
+  project=deadlift-$app-dev
+  [[ -f $dir/compose.yaml ]] || refuse "dev hasn't been deployed, so there's nothing to roll back"
+  [[ -f $previous/compose.yaml ]] ||
+    refuse "dev has no previous version to roll back to: Rollback goes back one step only, and only once Dev has had two versions. To go further back, deploy an earlier commit. Nothing was changed"
+  url=$(sed -n 's/^DEADLIFT_URL=//p' "$dir/vars.env")
+  config=$(compose "$previous" config --format json 2>"$delivery/config.err") ||
+    fail "couldn't read dev's previous version: $(tail -n 1 "$delivery/config.err"). Nothing was changed"
+  routed=$(jq -r '."x-deadlift".route | split(":")[0]' <<<"$config")
+  pull_images
+  if [[ -n $discard ]]; then
+    if [[ -f $dir/snapshot ]]; then before=$(<"$dir/snapshot"); fi
+    [[ -n $before && -d $snapshots/$before ]] ||
+      fail "the Volume Snapshot from before dev's current version was deployed is gone, so --discard-newer-data can't go back to it. Nothing was changed"
+    pull_snapshot_image
+  fi
+
+  echo "Stopping dev to start its previous version"
+  if ! project_containers stop; then
+    restart_version "$dir" ||
+      fail "couldn't stop dev to start its previous version, and its current version didn't start again, so Dev is stopped"
+    fail "couldn't stop dev to start its previous version, so nothing was rolled back. Dev is up on its current version, at $url"
+  fi
+  echo "Starting dev's previous version on today's data"
+  if start_environment "$previous" "$routed"; then
+    promote_previous
+    output environment dev
+    output url "$url"
+    echo "deadlift: rolled dev back to its previous version, on today's data, which is up at $url" >&2
+    return
+  fi
+  why=$(tail -n 1 "$delivery/up.log")
+  project_containers stop || true
+
+  if [[ -z $discard ]]; then
+    echo "Starting dev's current version again"
+    if ! restart_version "$dir"; then
+      project_containers stop || true
+      fail "dev's previous version didn't start on today's data ($why), and its current version didn't start again either ($(tail -n 1 "$delivery/up.log")), so Dev is stopped"
+    fi
+    refuse "dev's previous version didn't start on today's data: $why. Rollback was refused, and Dev is up on its current version again, with its data as it was, at $url. To roll back to the data from before the current version was deployed, discarding what's been written since, run it again with --discard-newer-data, which keeps a Volume Snapshot of today's data first"
+  fi
+
+  echo "Taking a Volume Snapshot of dev's data as it is today"
+  if ! take_snapshot; then
+    restart_version "$dir" ||
+      fail "dev's previous version didn't start on today's data ($why), and a Volume Snapshot of today's data couldn't be taken, so nothing was discarded, and Dev is stopped"
+    fail "dev's previous version didn't start on today's data ($why), and a Volume Snapshot of today's data couldn't be taken, so nothing was discarded. Dev is up on its current version, at $url"
+  fi
+  echo "Putting back the Volume Snapshot from before dev's current version, $before"
+  project_containers rm --force || true
+  if ! restore_snapshot "$before"; then
+    why="the Volume Snapshot from before the current version, $before, couldn't be put back"
+  elif ! start_environment "$previous" "$routed"; then
+    why="it didn't start on the data from before the current version either: $(tail -n 1 "$delivery/up.log")"
+  else
+    promote_previous
+    prune_snapshots
+    output environment dev
+    output url "$url"
+    echo "deadlift: rolled dev back to its previous version, on its data from before the current version, which is up at $url. Today's data is kept in the Volume Snapshot $snapshot" >&2
+    return
+  fi
+  echo "Putting back today's data and dev's current version"
+  project_containers rm --force || true
+  if ! restore_snapshot "$snapshot" || ! restart_version "$dir"; then
+    project_containers stop || true
+    fail "dev's previous version didn't start on today's data, and $why. Putting back today's data and the current version failed too, so Dev is stopped. Today's data is in the Volume Snapshot $snapshot"
+  fi
+  fail "dev's previous version didn't start on today's data, and $why. Nothing was rolled back: Dev is up on its current version again, with today's data, at $url"
 }
 
 op_deploy() {
@@ -842,8 +965,29 @@ op_deploy() {
   esac
   read_app
   take_lock
-  trap prune_after EXIT
+  prune_pending=yes
+  trap prune_quietly EXIT
   if [[ $env == dev ]]; then deploy_dev; else deploy_feature; fi
+}
+
+op_rollback() {
+  env=${1:-}
+  shift || true
+  discard=''
+  while (($#)); do
+    case $1 in
+      --discard-newer-data) discard=yes && shift ;;
+      *) usage "unknown argument '$1' for rollback" ;;
+    esac
+  done
+  case $env in
+    dev) ;;
+    feature-*) check_feature_key && refuse "Rollback is only for the Dev Environment, dev, and $env is a Feature Environment: deploy it again from an earlier commit instead. Nothing was changed" ;;
+    *) usage "'$env' isn't the Dev Environment: rollback takes dev" ;;
+  esac
+  read_app
+  take_lock
+  rollback_dev
 }
 
 op_destroy() {
@@ -958,6 +1102,7 @@ done
 
 case ${1:-} in
   deploy) shift && op_deploy "$@" ;;
+  rollback) shift && op_rollback "$@" ;;
   destroy) shift && op_destroy "$@" ;;
   sweep) shift && op_sweep "$@" ;;
   *) usage "'${1:-}' isn't an operation" ;;

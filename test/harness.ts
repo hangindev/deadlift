@@ -458,10 +458,25 @@ export async function startHarness() {
       return (await readdir(dir).catch(() => [])).sort();
     }
 
+    /** A file as one of `app`'s Volume Snapshots holds it, at `path` in one of Dev's named
+     * volumes, as an operator unpacking it would read it. Empty when no volume in it has one. */
+    async function fileInVolumeSnapshot(app: string, snapshot: string, path: string): Promise<string> {
+      const dir = join(state, "apps", app, "environments/dev/snapshots", snapshot);
+      for (const tar of (await readdir(dir)).filter((name) => name.endsWith(".tar"))) {
+        const contents = await run("tar", ["-xOf", join(dir, tar), `./${path}`]).then(
+          ({ stdout }) => stdout,
+          () => undefined,
+        );
+        if (contents !== undefined) return contents;
+      }
+      return "";
+    }
+
     return {
       apps,
       startedAt,
       volumeSnapshots,
+      fileInVolumeSnapshot,
       /** Where the Dev Environment of `app` listens on the host's loopback: the App's base. */
       devPort: (app: "a" | "b") => apps[app].portBase,
       /** Where Slot `slot` of `app` listens on the host's loopback: the App's base + 10 × slot. */
