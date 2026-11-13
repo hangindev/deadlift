@@ -171,25 +171,43 @@ pull_images() {
   done < <(jq -r '[.services[].image // empty] | unique[]' <<<"$config")
 }
 
+# Joins its arguments as in a sentence: "a", "a and b", "a, b and c".
+sentence() {
+  local joined=$1
+  shift
+  while (($# > 1)); do
+    joined+=", $1"
+    shift
+  done
+  echo "$joined${1:+ and $1}"
+}
+
+# Prints which Slot each of the App's Feature Environments holds, as `<slot> <environment>`
+# lines in Slot order.
+held_slots() {
+  local file
+  for file in "$state/apps/$app/environments"/feature-*/slot; do
+    [[ -f $file ]] || continue
+    echo "$(<"$file") $(basename "$(dirname "$file")")"
+  done | sort -n
+}
+
 # Sets slot to the Slot that $env holds, or the lowest free one. Skips when none is free.
 claim_slot() {
-  local environments=$state/apps/$app/environments held=() holders=() file s
-  if [[ -f $environments/$env/slot ]]; then
-    slot=$(<"$environments/$env/slot")
+  local held holders s
+  if [[ -f $state/apps/$app/environments/$env/slot ]]; then
+    slot=$(<"$state/apps/$app/environments/$env/slot")
     return
   fi
-  for file in "$environments"/feature-*/slot; do
-    [[ -f $file ]] || continue
-    held+=("$(<"$file")")
-    holders+=("$(basename "$(dirname "$file")")")
-  done
+  held=$(held_slots)
   for ((s = 1; s <= slots; s++)); do
-    if [[ " ${held[*]} " != *" $s "* ]]; then
+    if ! grep -q "^$s " <<<"$held"; then
       slot=$s
       return
     fi
   done
-  skip "all $slots of $app's Slots are held, by ${holders[*]}, so $env wasn't deployed"
+  mapfile -t holders < <(cut -d ' ' -f 2 <<<"$held")
+  skip "all $slots of $app's Slots are held, by $(sentence "${holders[@]}"), so $env wasn't deployed. Destroy one of them to free its Slot"
 }
 
 deploy_feature() {
