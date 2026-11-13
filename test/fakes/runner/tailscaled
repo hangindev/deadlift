@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# A fake `tailscaled` on a fake CI runner, ahead of any real one: it logs the call and succeeds.
+set -euo pipefail
+printf 'tailscaled %s\n' "$*" >>"${FAKE_RUNNER_STATE:?the fake tailscaled needs FAKE_RUNNER_STATE}/calls.log"
