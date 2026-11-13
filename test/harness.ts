@@ -370,6 +370,8 @@ export async function startHarness() {
 
     return {
       apps,
+      /** Where the Dev Environment of `app` listens on the host's loopback: the App's base. */
+      devPort: (app: "a" | "b") => apps[app].portBase,
       /** Where Slot `slot` of `app` listens on the host's loopback: the App's base + 10 × slot. */
       slotPort: (app: "a" | "b", slot: number) => apps[app].portBase + 10 * slot,
       deliver,

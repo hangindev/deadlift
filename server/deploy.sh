@@ -235,6 +235,50 @@ deploy_feature() {
   echo "deadlift: deployed $env, which is up at $url" >&2
 }
 
+# Starts the Environment whose files are in $1, which routes to the service $2, and waits for
+# that service to be healthy. Returns non-zero when it doesn't start, with the reason as the last
+# line of $delivery/up.log.
+start_environment() {
+  local dir=$1 routed=$2 log=$delivery/up.log
+  compose "$dir" up --detach --pull never --remove-orphans 2>&1 | tee "$log" >&2 &&
+    compose "$dir" up --detach --pull never --no-recreate --no-deps --wait \
+      --wait-timeout "$health_timeout" "$routed" 2>&1 | tee "$log" >&2
+}
+
+# Deploys the delivered template to the Dev Environment, at the base of the App's ports and the
+# root of its Service.
+deploy_dev() {
+  local dir=$state/apps/$app/environments/dev next=$delivery/next name url suffix port
+  [[ -f $delivery/compose.yaml ]] || refuse "the delivery has no compose.yaml to deploy"
+  project=deadlift-$app-dev
+  port=$port_base
+
+  mkdir "$next"
+  cp "$delivery/compose.yaml" "$next/compose.yaml"
+  for name in "${!images[@]}"; do
+    echo "DEADLIFT_IMAGE_${name^^}=${images[$name]}"
+  done >"$next/vars.env"
+  check_template "$next"
+  read_tailnet_suffix
+  url=https://$app.$suffix/
+  jq -n --arg service "$routed" --arg port "$port" --argjson target "$route_port" \
+    '{services: {($service): {ports: [{host_ip: "127.0.0.1", published: $port, target: $target}]}}}' \
+    >"$next/override.json"
+  pull_images
+
+  echo "Starting dev"
+  start_environment "$next" "$routed" || fail "dev didn't start: $(tail -n 1 "$delivery/up.log")"
+  mkdir -p "$dir"
+  cp "$next/compose.yaml" "$next/vars.env" "$next/override.json" "$dir/"
+  if ! tailscale serve --service="svc:$app" --https=443 --bg "http://127.0.0.1:$port" >&2; then
+    fail "dev is up on its new version, but Tailscale Serve couldn't map it at $url"
+  fi
+
+  output environment dev
+  output url "$url"
+  echo "deadlift: deployed dev, which is up at $url" >&2
+}
+
 op_deploy() {
   env=${1:-}
   shift || true
@@ -255,12 +299,12 @@ op_deploy() {
       [[ ${env#feature-} =~ ^[a-z0-9][a-z0-9-]{0,29}$ ]] ||
         usage "'${env#feature-}' isn't a Feature Environment key: up to 30 of a-z, 0-9 and -"
       ;;
-    dev) refuse "deploying the Dev Environment isn't supported by this Server yet" ;;
+    dev) ;;
     *) usage "'$env' isn't an Environment: dev or feature-<key>" ;;
   esac
   read_app
   take_lock
-  deploy_feature
+  if [[ $env == dev ]]; then deploy_dev; else deploy_feature; fi
 }
 
 app='' delivery=''
