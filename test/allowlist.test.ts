@@ -125,6 +125,60 @@ const refusals: Array<[string, () => Promise<string>, RegExp]> = [
   ["a container_name", () => inWeb("    container_name: web\n"), /container_name/],
 ];
 
+const postgresImage =
+  "postgres:17.6-alpine@sha256:ef257d85f76e48da1c64832459b59fcaba1a4dac97bf5d7450c77753542eee94";
+
+describe("what a template may hold", () => {
+  afterAll(() => harness.removeServers());
+
+  test("inline configs, tmpfs and shm_size are allowed, and the official Postgres image starts", async () => {
+    const server = await harness.server();
+    const app = server.apps.a.name;
+    // Postgres runs the inline config as its first-start script, and is healthy only once the
+    // table that script makes is there. web waits for it.
+    const template = (await exampleTemplate())
+      .replace(
+        "services:\n",
+        `services:
+  postgres:
+    image: ${postgresImage}
+    environment:
+      POSTGRES_PASSWORD: example
+    configs:
+      - source: schema
+        target: /docker-entrypoint-initdb.d/schema.sql
+    tmpfs:
+      - /tmp
+    shm_size: 256m
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "psql -h 127.0.0.1 -U postgres -tAc 'select 1 from marker'"]
+      interval: 1s
+      retries: 120
+`,
+      )
+      .replace(
+        "    depends_on:\n",
+        "    depends_on:\n      postgres:\n        condition: service_healthy\n",
+      )
+      .replace(
+        /^volumes:\n/m,
+        "configs:\n  schema:\n    content: |\n      create table marker (id int);\n\nvolumes:\n  pgdata:\n",
+      );
+
+    const result = await server.deliver(
+      app,
+      ["deploy", "feature-1", "--image", `web=${await harness.image()}`],
+      { template },
+    );
+
+    expect(result.outcome, result.output).toBe("done");
+    expect(await get(server.slotPort("a", 1), "/version")).toBe("1");
+    expect(await server.runningContainers(app)).toMatch(/-postgres-1/);
+  });
+});
+
 describe("a template ADR 0001 refuses", () => {
   let server: Awaited<ReturnType<typeof harness.server>>;
   let app: string;

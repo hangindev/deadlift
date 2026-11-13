@@ -92,7 +92,11 @@ export type Delivery = Result & {
   swept?: string;
 };
 
-export type ServeMapping = { service: string; port: number; target: string };
+/** An App's limits for each of its containers, as `deadlift app add` sets them: memory as Docker
+ * writes it (`512m`), CPUs, and processes. */
+export type Limits = { memory?: string; cpus?: string; pids?: number };
+
+export type ServeMapping ={ service: string; port: number; target: string };
 
 /** Runs a command, collecting its stdout and stderr together. */
 function collect(
@@ -210,8 +214,9 @@ export async function startHarness() {
     return ref;
   }
 
-  /** A fresh Server holding two Apps, `a` and `b`, with no Environments yet. */
-  async function server(options: { slots?: number } = {}) {
+  /** A fresh Server holding two Apps, `a` and `b`, with no Environments yet. Each App has
+   * `slots` Slots and, when given, the per-container `limits` `deadlift app add` sets. */
+  async function server(options: { slots?: number; limits?: Limits } = {}) {
     const n = ++serverCount;
     const dir = join(root, `server-${n}`);
     const state = join(dir, "srv");
@@ -245,17 +250,20 @@ export async function startHarness() {
       `DEADLIFT_STATE_DIR=${state}\nDEADLIFT_LIB_DIR=${lib}\n`,
     );
 
-    // What `deadlift app add` gives each App: its own block of ports and its Slots.
+    // What `deadlift app add` gives each App: its own block of ports, its Slots and its limits.
     const apps: Record<"a" | "b", { name: string; portBase: number }> = {
       a: { name: `${prefix.slice("deadlift-".length)}-${n}a`, portBase: 0 },
       b: { name: `${prefix.slice("deadlift-".length)}-${n}b`, portBase: 0 },
     };
+    const limits = Object.entries(options.limits ?? {})
+      .map(([name, value]) => `${name}=${value}\n`)
+      .join("");
     for (const app of Object.values(apps)) {
       app.portBase = await freePortBlock(Object.values(apps).map((other) => other.portBase));
       await mkdir(join(state, "apps", app.name), { recursive: true });
       await writeFile(
         join(state, "apps", app.name, "app.conf"),
-        `port_base=${app.portBase}\nslots=${options.slots ?? 3}\n`,
+        `port_base=${app.portBase}\nslots=${options.slots ?? 3}\n${limits}`,
       );
     }
 
