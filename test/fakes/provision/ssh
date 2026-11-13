@@ -1,0 +1,97 @@
+#!/usr/bin/env bash
+# A fake `ssh` for the provision wizard's tests, on the maintainer's computer. It stands in for
+# machines bought at a provider, each a directory in $DEADLIFT_TEST_WORLD/machines/ named by its
+# public address, and for the tailnet they join. A machine's directory holds:
+#
+#   public-ssh-closed   present once the provider's firewall blocks SSH on its public address
+#   bootstraps          one line per bootstrap run on it, naming the route it came by
+#   hostname, tags      its tailnet name and tags, once `tailscale up` has run on it
+#
+# It answers, as root only:
+#   ssh [-o option]... [-t] root@<public address> <command>     until SSH there is closed
+#   ssh [-o option]... [-t] root@<name>.tailtest.ts.net <command>   once the machine joined
+# these commands:
+#   true                            reachability
+#   <bootstrap's remote command>    reads the tar of server/ on stdin, records the run
+#   tailscale up [flag]...          joins the tailnet, taking --hostname and --advertise-tags
+#   tailscale status --json         the machine's own name and tags
+#
+# Every call is logged to $DEADLIFT_TEST_WORLD/ssh.log, and anything else fails.
+set -euo pipefail
+
+world=${DEADLIFT_TEST_WORLD:?the fake ssh needs DEADLIFT_TEST_WORLD}
+suffix=tailtest.ts.net
+
+while (($#)); do
+  case $1 in
+    -o) shift 2 ;;
+    -t | -T | -n) shift ;;
+    -*) echo "fake ssh: unknown option $1" >&2 && exit 255 ;;
+    *) break ;;
+  esac
+done
+destination=${1:?fake ssh: no destination}
+shift
+command="$*"
+printf '%s %s\n' "$destination" "$command" >>"$world/ssh.log"
+
+user=${destination%@*} host=${destination#*@}
+if [[ $user != root ]]; then
+  echo "$destination: Permission denied (publickey)." >&2
+  exit 255
+fi
+
+machine='' route=''
+if [[ -d $world/machines/$host ]]; then
+  machine=$world/machines/$host route=public
+  if [[ -e $machine/public-ssh-closed ]]; then
+    echo "ssh: connect to host $host port 22: Connection timed out" >&2
+    exit 255
+  fi
+else
+  for candidate in "$world"/machines/*; do
+    if [[ -f $candidate/hostname && "$(<"$candidate/hostname").$suffix" == "$host" ]]; then
+      machine=$candidate route=tailnet
+    fi
+  done
+  if [[ -z $machine ]]; then
+    echo "ssh: Could not resolve hostname $host: Name or service not known" >&2
+    exit 255
+  fi
+fi
+
+case $command in
+  true) ;;
+  *'"$d/bootstrap.sh"'*)
+    files=$(tar -tf -)
+    if ! grep -qx './bootstrap.sh' <<<"$files"; then
+      echo "fake ssh: bootstrap's tar holds no bootstrap.sh" >&2
+      exit 1
+    fi
+    echo "$route" >>"$machine/bootstraps"
+    echo "==> bootstrap ran on $(basename "$machine")"
+    ;;
+  "tailscale up "*)
+    tags=''
+    read -ra flags <<<"$command"
+    for flag in "${flags[@]}"; do
+      case $flag in
+        --hostname=*) echo "${flag#--hostname=}" >"$machine/hostname.new" ;;
+        --advertise-tags=*) tags=${flag#--advertise-tags=} ;;
+      esac
+    done
+    echo "To authenticate, visit:"
+    echo "        https://login.tailscale.com/a/fake"
+    printf '%s\n' "${tags//,/$'\n'}" >"$machine/tags"
+    if [[ -f $machine/hostname.new ]]; then mv "$machine/hostname.new" "$machine/hostname"; fi
+    echo "Success."
+    ;;
+  "tailscale status --json")
+    jq -n --arg name "$(cat "$machine/hostname" 2>/dev/null)" --rawfile tags "$machine/tags" \
+      '{Self: {HostName: $name, Tags: ($tags | split("\n") | map(select(. != "")))}}'
+    ;;
+  *)
+    echo "fake ssh: the wizard has no reason to run '$command' on a machine" >&2
+    exit 127
+    ;;
+esac

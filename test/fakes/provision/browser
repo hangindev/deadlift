@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# A fake browser opener for the provision wizard's tests, standing in for xdg-open, open, wslview
+# and explorer.exe, so a test never opens a real browser. It logs each URL it's asked to open to
+# $DEADLIFT_TEST_WORLD/opened.
+set -euo pipefail
+printf '%s\n' "$*" >>"${DEADLIFT_TEST_WORLD:?the fake browser needs DEADLIFT_TEST_WORLD}/opened"
