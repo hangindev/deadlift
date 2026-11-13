@@ -20,11 +20,13 @@
 #
 # The template must name the one service deadlift routes to as `x-deadlift.route:
 # <service>:<port>`, and that service must have a Compose healthcheck that isn't disabled
-# (ADR 0002). deadlift publishes it on the host's loopback at the Environment's port, starts the
-# Environment with `docker compose up`, and waits for the routed service to be healthy. It waits
-# on that service only, because `up --wait` over a whole project fails when a one-shot service
-# that nothing depends on exits 0. A migration the routed service depends on still has to
-# succeed first.
+# (ADR 0002). Anything ADR 0001 refuses is refused before anything stops: template.sh, installed
+# beside this script, checks the template and writes deadlift's override, which publishes the
+# routed service on the host's loopback at the Environment's port and sets the App's limits.
+# deadlift then starts the Environment with `docker compose up`, and waits for the routed service
+# to be healthy. It waits on that service only, because `up --wait` over a whole project fails
+# when a one-shot service that nothing depends on exits 0. A migration the routed service depends
+# on still has to succeed first.
 #
 # Ports: each App has a block of 100 loopback ports from its `port_base`. The Dev Environment is
 # at the base, and the Feature Environment holding Slot s at base + 10s. Tailscale Serve maps
@@ -34,7 +36,9 @@
 # State, all root-only, under /srv/deadlift:
 #   lock                            The Server's lock: one operation at a time.
 #   apps/<app>/app.conf             The App's entry in the Server registry, written by
-#                                   `deadlift app add`: port_base=<port> and slots=<n>.
+#                                   `deadlift app add`: port_base=<port> and slots=<n>, and
+#                                   the per-container limits memory=<size, e.g. 512m>,
+#                                   cpus=<n> and pids=<n> (template.sh has the defaults).
 #   apps/<app>/environments/<env>/  An Environment: its template (compose.yaml), the variables
 #                                   it was deployed with (vars.env), deadlift's override
 #                                   (override.json) and, for Feature, the Slot it holds (slot).
@@ -51,6 +55,8 @@ set -euo pipefail
 umask 077
 
 state=${DEADLIFT_STATE_DIR:-/srv/deadlift}
+# Where bootstrap installed this script, and template.sh beside it.
+lib=$(dirname "${BASH_SOURCE[0]}")
 # How long the routed service has to report healthy.
 health_timeout=300
 # The --image arguments: each image's reference, by name.
@@ -126,30 +132,24 @@ compose() {
     --env-file "$dir/vars.env" "${files[@]}" "$@"
 }
 
-# Checks the template in $1 and sets routed and route_port from its x-deadlift.route, and config
-# to the template as Compose normalises it. Refuses, changing nothing, a template deadlift won't
-# run.
+# Checks the template in $1 with template.sh, and sets routed to the service its
+# x-deadlift.route names, and config to the template as Compose normalises it. Refuses, changing
+# nothing, a template deadlift won't run (ADR 0001, ADR 0002).
 check_template() {
-  local dir=$1 health
-  config=$(compose "$dir" config --format json 2>"$dir/config.err") ||
-    refuse "the template isn't valid Compose: $(tail -n 1 "$dir/config.err"). Nothing was changed"
-  route=$(jq -r '."x-deadlift".route // empty' <<<"$config")
-  [[ -n $route ]] ||
-    refuse "the template has no x-deadlift.route. Name the service deadlift routes to as \`x-deadlift.route: <service>:<port>\`. Nothing was changed"
-  [[ $route =~ ^([a-zA-Z0-9][a-zA-Z0-9_.-]*):([0-9]{1,5})$ ]] ||
-    refuse "x-deadlift.route is '$route', and it must be <service>:<port>. Nothing was changed"
-  routed=${BASH_REMATCH[1]} route_port=${BASH_REMATCH[2]}
-  health=$(jq -r --arg service "$routed" '
-    .services[$service] // "missing" | if . == "missing" then . else
-      .healthcheck | if . == null then "none"
-      elif .disable == true or (.test | type == "array" and .[0] == "NONE") then "disabled"
-      else "ok" end
-    end' <<<"$config")
-  case $health in
-    missing) refuse "x-deadlift.route names the service $routed, and the template has none. Nothing was changed" ;;
-    none) refuse "the routed service $routed has no healthcheck in the template, and deadlift judges an Environment by it (ADR 0002). Nothing was changed" ;;
-    disabled) refuse "the routed service $routed has its healthcheck disabled, and deadlift judges an Environment by it (ADR 0002). Nothing was changed" ;;
-  esac
+  local status=0
+  config=$("$lib/template.sh" check "$1" "$project") || status=$?
+  ((status == 0)) || exit "$status"
+  route=$(jq -r '."x-deadlift".route' <<<"$config")
+  routed=${route%:*}
+}
+
+# Writes deadlift's override for the checked template in $1: the routed service published on the
+# host's loopback at port $2, and the App's limits and deadlift's hardening on every service.
+write_override() {
+  local status=0
+  "$lib/template.sh" override "$1" "$project" --port "$2" --app "$app" --environment "$env" \
+    --limits "$state/apps/$app/app.conf" >"$1/override.json" || status=$?
+  ((status == 0)) || exit "$status"
 }
 
 # Pulls every image the template names that the Server doesn't have yet, with the job's registry
@@ -209,9 +209,7 @@ deploy_feature() {
   port=$((port_base + 10 * slot))
   public=$((10000 + slot))
   url=https://$app.$suffix:$public/
-  jq -n --arg service "$routed" --arg port "$port" --argjson target "$route_port" \
-    '{services: {($service): {ports: [{host_ip: "127.0.0.1", published: $port, target: $target}]}}}' \
-    >"$next/override.json"
+  write_override "$next" "$port"
   pull_images
 
   mkdir -p "$dir"

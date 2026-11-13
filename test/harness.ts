@@ -217,7 +217,8 @@ export async function startHarness() {
     const state = join(dir, "srv");
     const bin = join(dir, "bin");
     const clientBin = join(dir, "client-bin");
-    // What bootstrap installs: the entry command and the deploy script, never delivered.
+    // What bootstrap installs: the entry command, the deploy script and the template check
+    // beside it, never delivered.
     const sbin = join(dir, "sbin");
     const lib = join(dir, "lib");
     for (const d of [state, bin, clientBin, sbin, lib, join(dir, "home")]) {
@@ -225,12 +226,14 @@ export async function startHarness() {
     }
     await copyFile(join(repo, "server/entry.sh"), join(sbin, "deadlift-entry"));
     await copyFile(join(repo, "server/deploy.sh"), join(lib, "deploy.sh"));
+    await copyFile(join(repo, "server/template.sh"), join(lib, "template.sh"));
     await copyFile(join(fakes, "sudo"), join(bin, "sudo"));
     await copyFile(join(fakes, "tailscale"), join(bin, "tailscale"));
     await copyFile(join(fakes, "ssh"), join(clientBin, "ssh"));
     for (const file of [
       join(sbin, "deadlift-entry"),
       join(lib, "deploy.sh"),
+      join(lib, "template.sh"),
       join(bin, "sudo"),
       join(bin, "tailscale"),
       join(clientBin, "ssh"),
