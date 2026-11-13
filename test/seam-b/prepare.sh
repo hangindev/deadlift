@@ -25,6 +25,12 @@ if ! grep -qxF "$(<"$key")" /root/.ssh/authorized_keys; then
   cat "$key" >>/root/.ssh/authorized_keys
 fi
 
+# The runner image leaves its own sudo rule group-readable, which sudo accepts and `visudo -c`
+# doesn't. A Server's rules must pass `visudo -c`, so it gets the mode visudo wants.
+for rule in /etc/sudoers.d/*; do
+  if [[ -f $rule && $(stat -c %a "$rule") != 440 ]]; then chmod 0440 "$rule"; fi
+done
+
 # The Seam A tests' fake, which answers what the deploy script and app.sh ask of Tailscale on a
 # Server. Installed over an earlier stand-in, never over a real tailscale.
 fake=$(dirname "${BASH_SOURCE[0]}")/../fakes/tailscale
