@@ -24,6 +24,8 @@
 #     /usr/local/lib/deadlift/deploy.sh, with the template check, template.sh, beside it, all
 #     owned by root. `deadlift app add` gives each App's deploy user one sudo rule for the entry
 #     command. jq, and python3 with PyYAML, which they use.
+#   - The Server half of `deadlift app add`, `app secrets`, `app remove` and `server status`,
+#     /usr/local/lib/deadlift/app.sh, which the maintainer runs over SSH as root.
 #   - /srv/deadlift, only for root: the Server's lock, the Server registry (apps/) and the
 #     Server-wide settings (settings, below).
 #
@@ -174,6 +176,8 @@ install_scripts() {
   echo "$(installed_or_kept) the deploy script, $lib/deploy.sh"
   install_file 0755 "$here/template.sh" "$lib/template.sh"
   echo "$(installed_or_kept) the template check beside it, $lib/template.sh"
+  install_file 0755 "$here/app.sh" "$lib/app.sh"
+  echo "$(installed_or_kept) the Server half of \`deadlift app\` and \`server status\`, $lib/app.sh"
   install_file 0755 "$here/firewall.sh" "$lib/firewall.sh"
 }
 
@@ -246,7 +250,7 @@ setup_state() {
 }
 
 [[ $EUID -eq 0 ]] || refuse "bootstrap needs root"
-for file in entry.sh deploy.sh template.sh firewall.sh; do
+for file in entry.sh deploy.sh template.sh firewall.sh app.sh; do
   [[ -r $here/$file ]] || refuse "$file isn't beside bootstrap.sh. Run it through \`deadlift server bootstrap\`, which sends all of server/"
 done
 # shellcheck source=/dev/null

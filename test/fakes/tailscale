@@ -7,6 +7,7 @@
 #   tailscale serve --service=svc:<app> --https=<port> [--bg] <target>   map a port
 #   tailscale serve --service=svc:<app> --https=<port> off    unmap it; fails when it isn't mapped
 #   tailscale serve status --json                             every Service's mappings
+#   tailscale serve clear svc:<app>                           unmap every port of the Service
 #
 # Every call is logged, and anything else fails, so a call deadlift shouldn't make shows up.
 # Its state lives beside the fake Server's bin directory, in tailscale/.
@@ -40,6 +41,12 @@ if [[ $* == "serve status --json" ]]; then
           }
         }) | from_entries)}
       end' <"$mappings"
+  exit 0
+fi
+
+if [[ ${1:-} == serve && ${2:-} == clear && ${3:-} == svc:* && $# == 3 ]]; then
+  grep -v "^$3 " "$mappings" >"$mappings.new" || true
+  mv "$mappings.new" "$mappings"
   exit 0
 fi
 
