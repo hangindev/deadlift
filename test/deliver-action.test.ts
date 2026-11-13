@@ -1,6 +1,6 @@
 // The deliver action, run through its action.yml on a fake runner. Its `ssh` stands in for the
 // Server, so these tests check what the action sends and how it reports the Server's answer;
-// Seam A (deliver-*.test.ts) checks what the Server does with a delivery.
+// the delivery tests (deliver-*.test.ts) check what the Server does with a delivery.
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";

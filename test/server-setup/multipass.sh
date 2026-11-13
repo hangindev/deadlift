@@ -1,19 +1,20 @@
 #!/usr/bin/env bash
-# Runs Seam B, then Seam A on the Server it leaves, in a fresh Multipass VM of Ubuntu 24.04, the
-# way CI does on its runner. The VM is marked as a throwaway machine, so the tests agree to
-# reconfigure it, and deleted afterwards.
+# Runs the server-setup tests, then the delivery tests on the Server they leave, in a fresh
+# Multipass VM of Ubuntu 24.04, the way CI does on its runner. The VM is marked as a throwaway
+# machine, so the tests agree to reconfigure it, and deleted afterwards.
 #
-#   test/seam-b/multipass.sh
+#   test/server-setup/multipass.sh
 #
 # Needs multipass on this machine. Takes this checkout's committed and uncommitted files, not
 # its node_modules.
 set -euo pipefail
 
 repo=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
-vm=deadlift-seam-b-$(od -An -N3 -tx1 /dev/urandom | tr -d ' \n')
+vm=deadlift-server-setup-$(od -An -N3 -tx1 /dev/urandom | tr -d ' \n')
 node_version=24.21.0
 
-command -v multipass >/dev/null || { echo "deadlift: Seam B in a VM needs multipass" >&2 && exit 2; }
+command -v multipass >/dev/null ||
+  { echo "deadlift: the server-setup tests in a VM need multipass" >&2 && exit 2; }
 
 trap 'multipass delete --purge "$vm" 2>/dev/null || true' EXIT
 echo "Launching $vm"
@@ -37,11 +38,11 @@ multipass exec "$vm" -- bash -euo pipefail -c "
   sudo usermod --append --groups docker ubuntu
 "
 
-echo "Running Seam B, then Seam A on the Server it leaves"
+echo "Running the server-setup tests, then the delivery tests on the Server they leave"
 # A new login, so the docker group applies.
 multipass exec "$vm" -- sudo -u ubuntu -i bash -euo pipefail -c "
   cd ~/deadlift
   pnpm install --frozen-lockfile
-  pnpm test:seam-b
+  pnpm test:server-setup
   DEADLIFT_TEST_BOOTSTRAPPED=true pnpm test
 "

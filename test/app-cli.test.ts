@@ -1,5 +1,6 @@
 // `deadlift app` refusing on the maintainer's computer, before it reaches the Server or the
-// Tailscale API. What it does on a Server is Seam B's (test/seam-b/app.test.ts).
+// Tailscale API. What it does on a Server, the server-setup tests check
+// (test/server-setup/app.test.ts).
 import { spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";

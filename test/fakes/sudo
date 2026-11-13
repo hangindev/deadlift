@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# A fake `sudo` on the fake Server, for the Seam A tests. It plays the one rule `deadlift app add`
+# A fake `sudo` on the fake Server, for the delivery tests. It plays the one rule `deadlift app add`
 # installs for each App's deploy user:
 #
 #   deadlift-<app> ALL=(root) NOPASSWD: /usr/local/sbin/deadlift-entry
