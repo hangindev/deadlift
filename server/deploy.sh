@@ -7,6 +7,7 @@
 #
 # Usage:
 #   deploy.sh --app <app> --delivery <dir> deploy feature-<key> [--image <name>=<ref>]...
+#   deploy.sh --app <app> --delivery <dir> destroy feature-<key>
 #
 #   --app       The App, as the entry command worked it out. Never from a delivery's arguments.
 #   --delivery  The unpacked delivery: compose.yaml, the App's Compose template, and token, the
@@ -16,7 +17,15 @@
 #   deploy <environment> --image <name>=<ref>...
 #       Deploys the delivered template to the Environment, with each image reaching the template
 #       as ${DEADLIFT_IMAGE_<NAME>}. A Feature Environment, feature-<key>, takes a free Slot of
-#       the App's, or the one its key already holds, and is skipped when none is free.
+#       the App's, or the one its key already holds, and is skipped when none is free. A
+#       redeploy keeps the Environment's Slot, URL and volumes, and a failed one leaves it
+#       stopped.
+#
+#   destroy feature-<key>
+#       Removes the Feature Environment, its volumes and its Service mapping, and frees its
+#       Slot. Done, changing nothing, when the App has no such Environment.
+#
+# A Feature Environment's key is up to 30 of a-z, 0-9 and -, starting with a letter or digit.
 #
 # The template must name the one service deadlift routes to as `x-deadlift.route:
 # <service>:<port>`, and that service must have a Compose healthcheck that isn't disabled
@@ -80,6 +89,13 @@ skip() {
 # An output for `deliver`.
 output() {
   echo "deadlift-output: $1=$2"
+}
+
+# Refuses $env unless its key is up to 30 of a-z, 0-9 and -, so it's safe in paths, Compose
+# project names and URLs.
+check_feature_key() {
+  [[ ${env#feature-} =~ ^[a-z0-9][a-z0-9-]{0,29}$ ]] ||
+    usage "'${env#feature-}' isn't a Feature Environment key: up to 30 of a-z, 0-9 and -"
 }
 
 # Held for the whole run. Children inherit fd 9, so none may outlive the script.
@@ -253,6 +269,49 @@ deploy_feature() {
   echo "deadlift: deployed $env, which is up at $url" >&2
 }
 
+# Removes the Slot's public port from the App's Service, if it's mapped. A Feature Environment
+# whose first deploy failed was never mapped.
+unmap_slot() {
+  local public=$((10000 + $1))
+  tailscale serve --service="svc:$app" --https="$public" off >&2 2>/dev/null && return
+  # `off` fails when the port isn't mapped, so it fails here only if the port still is.
+  ! tailscale serve status --json | jq -e --arg service "svc:$app" --arg port "$public" \
+    '.Services[$service].TCP[$port] // empty' >/dev/null
+}
+
+# Removes every container, volume and network of the Compose project $1, by Compose's own
+# label, so it needs neither the template nor its variables.
+remove_project() {
+  local by_project=(--filter "label=com.docker.compose.project=$1") ids
+  mapfile -t ids < <(docker container ls --all --quiet "${by_project[@]}")
+  if ((${#ids[@]})); then docker container rm --force --volumes "${ids[@]}" >/dev/null || return; fi
+  mapfile -t ids < <(docker volume ls --quiet "${by_project[@]}")
+  if ((${#ids[@]})); then docker volume rm "${ids[@]}" >/dev/null || return; fi
+  mapfile -t ids < <(docker network ls --quiet "${by_project[@]}")
+  if ((${#ids[@]})); then docker network rm "${ids[@]}" >/dev/null || return; fi
+}
+
+# Destroys the App's Feature Environment $1: its Service mapping, its containers, volumes and
+# networks, and then its state, which frees its Slot. A destroy that stops partway leaves the
+# Slot held, and running it again finishes the job.
+destroy_feature() {
+  local env=$1 dir=$state/apps/$app/environments/$1 slot=''
+  output environment "$env"
+  if [[ ! -d $dir ]]; then
+    echo "deadlift: $env isn't on this Server, so there was nothing to destroy" >&2
+    return
+  fi
+  if [[ -f $dir/slot ]]; then slot=$(<"$dir/slot"); fi
+  echo "Destroying $env"
+  if [[ -n $slot ]] && ! unmap_slot "$slot"; then
+    fail "couldn't remove $env's address from Tailscale Serve, so $env was left as it was"
+  fi
+  remove_project "deadlift-$app-$env" ||
+    fail "couldn't remove all of $env's containers, volumes and networks. It's no longer mapped, and it keeps its Slot until destroy is run again"
+  rm -rf "${dir:?}"
+  echo "deadlift: destroyed $env with its volumes${slot:+, freeing Slot $slot}" >&2
+}
+
 op_deploy() {
   env=${1:-}
   shift || true
@@ -269,16 +328,26 @@ op_deploy() {
     esac
   done
   case $env in
-    feature-*)
-      [[ ${env#feature-} =~ ^[a-z0-9][a-z0-9-]{0,29}$ ]] ||
-        usage "'${env#feature-}' isn't a Feature Environment key: up to 30 of a-z, 0-9 and -"
-      ;;
+    feature-*) check_feature_key ;;
     dev) refuse "deploying the Dev Environment isn't supported by this Server yet" ;;
     *) usage "'$env' isn't an Environment: dev or feature-<key>" ;;
   esac
   read_app
   take_lock
   deploy_feature
+}
+
+op_destroy() {
+  env=${1:-}
+  (($# <= 1)) || usage "unknown argument '$2' for destroy"
+  case $env in
+    feature-*) check_feature_key ;;
+    dev) refuse "only Feature Environments can be destroyed, and dev is the Dev Environment. Nothing was changed" ;;
+    *) usage "'$env' isn't a Feature Environment: feature-<key>" ;;
+  esac
+  read_app
+  take_lock
+  destroy_feature "$env"
 }
 
 app='' delivery=''
@@ -297,5 +366,6 @@ done
 
 case ${1:-} in
   deploy) shift && op_deploy "$@" ;;
+  destroy) shift && op_destroy "$@" ;;
   *) usage "'${1:-}' isn't an operation" ;;
 esac
