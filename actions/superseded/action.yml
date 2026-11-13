@@ -1,0 +1,38 @@
+name: deadlift superseded
+description: >-
+  Says whether the tracked branch has moved past a commit, so a Dev workflow can skip a deploy
+  that a newer commit's own run makes. Asks GitHub's API, so it needs no checkout.
+inputs:
+  commit:
+    description: The commit to check, as a full SHA.
+    default: ${{ github.sha }}
+  branch:
+    description: The branch the Dev Environment tracks.
+    default: main
+  repository:
+    description: The repository, as <owner>/<name>.
+    default: ${{ github.repository }}
+  token:
+    description: A token that can read the repository's contents.
+    default: ${{ github.token }}
+outputs:
+  superseded:
+    description: "`true` when the branch has moved past the commit or no longer holds it, else `false`."
+    value: ${{ steps.superseded.outputs.superseded }}
+  head:
+    description: The branch's head commit, as GitHub has it now.
+    value: ${{ steps.superseded.outputs.head }}
+  reason:
+    description: Why, as one line starting `deadlift: `.
+    value: ${{ steps.superseded.outputs.reason }}
+runs:
+  using: composite
+  steps:
+    - id: superseded
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        GITHUB_REPOSITORY: ${{ inputs.repository }}
+        BRANCH: ${{ inputs.branch }}
+        COMMIT: ${{ inputs.commit }}
+      run: '"$GITHUB_ACTION_PATH/superseded.sh" "$BRANCH" "$COMMIT"'
