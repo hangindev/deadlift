@@ -146,6 +146,39 @@ take_lock() {
   fi
 }
 
+# Reads the Server-wide settings into feature_deploy_disk_limit and watchdog_disk_limit. One
+# missing, or the whole file, takes its default, as bootstrap would set it.
+read_settings() {
+  local file=$state/settings key value
+  feature_deploy_disk_limit=80 watchdog_disk_limit=90
+  if [[ -f $file ]]; then
+    while IFS='=' read -r key value; do
+      case $key in
+        feature_deploy_disk_limit) feature_deploy_disk_limit=$value ;;
+        watchdog_disk_limit) watchdog_disk_limit=$value ;;
+      esac
+    done <"$file"
+  fi
+  [[ $feature_deploy_disk_limit =~ ^(100|[1-9]?[0-9])$ && $watchdog_disk_limit =~ ^(100|[1-9]?[0-9])$ ]] ||
+    fail "the Server-wide settings in $file are broken: each disk limit must be a whole percentage, 0 to 100. Fix the file, so nothing was changed"
+}
+
+# Prints how full the disk is, as a whole percentage: the fuller of the filesystems holding the
+# Server's state and Docker's data. DEADLIFT_DISK_USED replaces the measure, for the tests.
+disk_used() {
+  local paths=("$state") root used
+  if [[ -n ${DEADLIFT_DISK_USED:-} ]]; then
+    echo "$DEADLIFT_DISK_USED"
+    return
+  fi
+  root=$(docker info --format '{{.DockerRootDir}}' 2>/dev/null) || true
+  if [[ -n $root && -d $root ]]; then paths+=("$root"); fi
+  # POSIX output: the fifth column is the percentage used.
+  used=$(df -P "${paths[@]}" | awk 'NR > 1 { sub(/%$/, "", $5); print $5 }' | sort -n | tail -n 1)
+  [[ $used =~ ^[0-9]+$ ]] || return 1
+  echo "$used"
+}
+
 # Reads the App's entry in the Server registry into port_base, slots and snapshots_kept.
 read_app() {
   local conf=$state/apps/$app/app.conf key value
@@ -292,11 +325,23 @@ claim_slot() {
   skip "all $slots of $app's Slots are held, by $(sentence "${holders[@]}"), so $env wasn't deployed. Destroy one of them to free its Slot"
 }
 
+# Skips the Feature deploy of $env when the disk is over the Server's lower threshold, so the
+# disk left goes to the Dev Environments.
+check_disk_for_feature() {
+  local used
+  read_settings
+  used=$(disk_used) || fail "couldn't measure how full the disk is, so $env wasn't deployed, and it was left as it was"
+  if ((used > feature_deploy_disk_limit)); then
+    skip "the disk is $used% full, over the Server's $feature_deploy_disk_limit% limit for Feature deploys, so $env wasn't deployed, and it was left as it was. Dev deploys still go ahead"
+  fi
+}
+
 deploy_feature() {
   local next=$delivery/next dir=$state/apps/$app/environments/$env url log
   local suffix slot port public
   [[ -f $delivery/compose.yaml ]] || refuse "the delivery has no compose.yaml to deploy"
   project=deadlift-$app-$env
+  check_disk_for_feature
 
   mkdir "$next"
   cp "$delivery/compose.yaml" "$next/compose.yaml"
@@ -614,6 +659,10 @@ op_destroy() {
   take_lock
   destroy_feature "$env"
 }
+
+if [[ -n ${DEADLIFT_DISK_USED:-} && ! $DEADLIFT_DISK_USED =~ ^(100|[1-9]?[0-9])$ ]]; then
+  usage "DEADLIFT_DISK_USED is '$DEADLIFT_DISK_USED', and it must be a whole percentage, 0 to 100"
+fi
 
 app='' delivery=''
 while (($#)); do
