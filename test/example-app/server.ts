@@ -1,5 +1,6 @@
 // The example App's web server, on port 3000: `/health` passes unless the image was built with
-// HEALTH=fail, and `/version` names the image, so a test can tell which version is live.
+// HEALTH=fail, `/version` names the image, so a test can tell which version is live, and
+// `/env/<NAME>` answers the container's variable NAME, 404 when it has none.
 import { createServer } from "node:http";
 
 const healthy = process.env.EXAMPLE_HEALTH !== "fail";
@@ -10,6 +11,10 @@ const server = createServer((request, response) => {
     response.writeHead(healthy ? 200 : 503).end(healthy ? "ok" : "failing on purpose");
   } else if (request.url === "/version") {
     response.end(version);
+  } else if (request.url?.startsWith("/env/")) {
+    const value = process.env[request.url.slice("/env/".length)];
+    if (value === undefined) response.writeHead(404).end();
+    else response.end(value);
   } else {
     response.writeHead(404).end();
   }
