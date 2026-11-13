@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+# deadlift: the maintainer's command, run on their own computer.
+#
+# Usage:
+#   deadlift server bootstrap <server>
+#
+#   server bootstrap  Turns <server>, a fresh Ubuntu 24.04 machine or a Server already, into an up
+#                     to date Server. It sends this checkout's server/ over SSH as root and runs
+#                     its bootstrap.sh there (see it for what it sets up). Safe to run again: a
+#                     run with nothing to do changes nothing. <server> is anything `ssh root@`
+#                     takes: the machine's public address before it joins the tailnet, its
+#                     tailnet name after.
+#
+# Every reason line starts with `deadlift: `. Exit codes: 0 done, 1 failed, 2 refused or bad
+# usage (nothing was changed).
+set -euo pipefail
+
+root=$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)
+
+usage() {
+  echo "deadlift: $1" >&2
+  sed -n 's/^#   \(deadlift .*\)/Usage: \1/p' "${BASH_SOURCE[0]}" >&2
+  exit 2
+}
+
+server_bootstrap() {
+  (($# == 1)) || usage "server bootstrap needs one <server>"
+  local server=$1 status=0
+  [[ $server =~ ^[A-Za-z0-9][A-Za-z0-9.:-]*$ ]] || usage "'$server' isn't a host name or address"
+  echo "Bootstrapping $server"
+  # COPYFILE_DISABLE keeps macOS tar from adding ._ files. Commands on the Server read nothing from
+  # the maintainer's terminal: stdin is the tar.
+  COPYFILE_DISABLE=1 tar -C "$root/server" -cf - . |
+    ssh -o StrictHostKeyChecking=accept-new "root@$server" \
+      'd=$(mktemp -d) && tar -xf - -C "$d" --no-same-owner && "$d/bootstrap.sh"; s=$?; rm -rf "$d"; exit $s' ||
+    status=$?
+  if ((status == 255)); then
+    echo "deadlift: couldn't reach $server over SSH as root, so nothing was changed." >&2
+    exit 1
+  fi
+  return "$status"
+}
+
+case "${1:-} ${2:-}" in
+  "server bootstrap") shift 2 && server_bootstrap "$@" ;;
+  *) usage "'${*}' isn't a command" ;;
+esac

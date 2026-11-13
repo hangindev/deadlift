@@ -32,7 +32,9 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm check-types
       # The runner image ships shellcheck.
-      - run: find server actions test/*.sh test/fakes -type f ! -name '*.yml' -print0 | xargs -0 shellcheck
+      - run: >-
+          find bin server actions test/*.sh test/fakes test/support test/seam-b -type f
+          ! -name '*.yml' ! -name '*.ts' -print0 | xargs -0 shellcheck
       # The workflows, and the composite actions written out as workflows.
       - run: test/actionlint.sh
 
@@ -52,3 +54,24 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm test
+
+  # Seam B: bootstraps this runner into a Server, for real, with only tailscale faked. Then Seam A
+  # runs on that Server, which proves the firewall and userns-remap hold for an App's containers.
+  seam-b:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24.21.0
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm test:seam-b
+      - name: Seam A on the bootstrapped Server
+        run: pnpm test
+        env:
+          DEADLIFT_TEST_BOOTSTRAPPED: "true"
