@@ -3,6 +3,7 @@
 #
 # Usage:
 #   deadlift server bootstrap <server>
+#   deadlift init <app> --server <server> [--branch <branch>] [--image <name>]...
 #
 #   server bootstrap  Turns <server>, a fresh Ubuntu 24.04 machine or a Server already, into an up
 #                     to date Server. It sends this checkout's server/ over SSH as root and runs
@@ -10,6 +11,12 @@
 #                     run with nothing to do changes nothing. <server> is anything `ssh root@`
 #                     takes: the machine's public address before it joins the tailnet, its
 #                     tailnet name after.
+#   init              Writes the starter workflows into the App's repository, the one it's run
+#                     in: deadlift-feature, deadlift-dev, deadlift-sweep and deadlift-rollback,
+#                     delivering the App to <server>, with Dev tracking <branch> (main by
+#                     default) and building each --image (web by default). They're the
+#                     App's own from then on: running it again leaves any it has changed alone
+#                     (see cli/init.sh).
 #
 # Every reason line starts with `deadlift: `. Exit codes: 0 done, 1 failed, 2 refused or bad
 # usage (nothing was changed).
@@ -43,5 +50,6 @@ server_bootstrap() {
 
 case "${1:-} ${2:-}" in
   "server bootstrap") shift 2 && server_bootstrap "$@" ;;
+  "init "*) shift && exec "$root/cli/init.sh" "$@" ;;
   *) usage "'${*}' isn't a command" ;;
 esac

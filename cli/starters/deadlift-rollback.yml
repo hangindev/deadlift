@@ -1,0 +1,51 @@
+# Rollback: takes the Dev Environment back one version, by hand (Actions, deadlift-rollback, Run
+# workflow). The previous version starts on today's data. If it isn't healthy with it, Dev stays on
+# the current version and the Rollback is refused, unless discard-newer-data is ticked: then Dev
+# goes back to the Volume Snapshot from before the current version, after a snapshot of today's
+# data is taken.
+name: deadlift-rollback
+
+on:
+  workflow_dispatch:
+    inputs:
+      discard-newer-data:
+        description: >-
+          If the previous version isn't healthy with today's data, go back to the data from
+          before the current version
+        type: boolean
+        default: false
+
+permissions: {}
+
+# Naming the shell turns on pipefail, so a failure in a pipeline fails the step.
+defaults:
+  run:
+    shell: bash
+
+concurrency:
+  group: deadlift-rollback
+  cancel-in-progress: false
+
+env:
+  DEADLIFT_APP: @app@
+  DEADLIFT_SERVER: @server@
+
+jobs:
+  rollback:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      # The Server pulls the previous version's images with this job's token, if it needs to.
+      packages: read
+      # deliver joins the tailnet with GitHub's OIDC token.
+      id-token: write
+    steps:
+      - uses: hangindev/deadlift/actions/deliver@v1
+        with:
+          app: ${{ env.DEADLIFT_APP }}
+          server: ${{ env.DEADLIFT_SERVER }}
+          operation: rollback
+          environment: dev
+          discard-newer-data: ${{ inputs.discard-newer-data }}
+          oauth-client-id: ${{ vars.TS_OAUTH_CLIENT_ID }}
+          audience: ${{ vars.TS_AUDIENCE }}
