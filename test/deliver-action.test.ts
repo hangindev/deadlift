@@ -98,4 +98,92 @@ describe("the deliver action", () => {
       swept: "",
     });
   });
+
+  /** The words of the operation the Server was asked to run, after the entry command's own. */
+  function operationSent(fake: ReturnType<typeof runner>) {
+    const [delivery] = fake.deliveries();
+    return delivery.command.slice(delivery.command.indexOf("--protocol") + 2);
+  }
+
+  it.each([
+    [
+      "a Sweep keeping some keys",
+      { operation: "sweep", keep: "42, 57\n61\n" },
+      ["sweep", "--keep", "42,57,61"],
+    ],
+    ["a Sweep keeping none", { operation: "sweep", "keep-none": "true" }, ["sweep", "--keep-none"]],
+    [
+      "a Feature deploy that sweeps first",
+      { operation: "deploy", environment: "feature-42", images: "web=x:1", keep: "42,57" },
+      ["deploy", "feature-42", "--image", "web=x:1", "--keep", "42,57"],
+    ],
+    ["a destroy", { operation: "destroy", environment: "feature-42" }, ["destroy", "feature-42"]],
+    ["a Rollback", { operation: "rollback", environment: "dev" }, ["rollback", "dev"]],
+    [
+      "a Rollback that may discard newer data",
+      { operation: "rollback", environment: "dev", "discard-newer-data": "true" },
+      ["rollback", "dev", "--discard-newer-data"],
+    ],
+  ])("delivers %s", (_, inputs, expected) => {
+    const fake = runner();
+
+    const run = fake.deliver(inputs);
+
+    expect(run.status, run.stderr).toBe(0);
+    expect(operationSent(fake)).toEqual(expected);
+  });
+
+  it("sends the template only with a deploy", () => {
+    const fake = runner();
+
+    fake.deliver({ operation: "destroy", environment: "feature-42" });
+
+    expect(Object.keys(fake.deliveries()[0].files)).toEqual(["token"]);
+  });
+
+  it.each(["keep-none", "discard-newer-data"])("refuses a %s that isn't true or false", (input) => {
+    const fake = runner();
+
+    const run = fake.deliver({ operation: "sweep", [input]: "yes" });
+
+    expect(run.status).toBe(2);
+    expect(run.stderr).toMatch(new RegExp(`^deadlift: ${input} must be true or false, not 'yes'`, "m"));
+    expect(fake.deliveries()).toEqual([]);
+  });
+
+  it("passes a skipped delivery, saying why", () => {
+    const fake = runner();
+    const reason = "deadlift: not deployed, because no Slot is free: feature-7, feature-9 hold them all";
+    fake.serverAnswers(`${reason}\n`, 75);
+
+    const run = fake.deliver({ operation: "deploy", environment: "feature-42", images: "web=x:1" });
+
+    expect(run.status, run.stderr).toBe(0);
+    expect(run.outputs).toMatchObject({ outcome: "skipped", reason });
+  });
+
+  it.each([
+    ["failed", 1],
+    ["was refused", 2],
+  ])("fails the step when the delivery %s, saying why, and still leaves", (_, status) => {
+    const fake = runner();
+    const reason = "deadlift: feature-42 didn't become healthy, so it's stopped";
+    fake.serverAnswers(`${reason}\n`, status);
+
+    const run = fake.deliver({ operation: "deploy", environment: "feature-42", images: "web=x:1" });
+
+    expect(run.status).toBe(status);
+    expect(run.outputs).toMatchObject({ outcome: "failed", reason });
+    expect(fake.calls()).toContain("sudo tailscale logout");
+  });
+
+  it("fails without delivering when it can't join the tailnet, and still leaves", () => {
+    const fake = runner();
+
+    const run = fake.deliver({ operation: "destroy", environment: "feature-42" }, { joinStatus: 1 });
+
+    expect(run.status).not.toBe(0);
+    expect(fake.deliveries()).toEqual([]);
+    expect(fake.calls()).toContain("sudo tailscale logout");
+  });
 });
