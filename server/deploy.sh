@@ -6,8 +6,9 @@
 # the delivery.
 #
 # Usage:
-#   deploy.sh --app <app> --delivery <dir> deploy dev|feature-<key> [--image <name>=<ref>]...
+#   deploy.sh --app <app> --delivery <dir> deploy dev|feature-<key> [--image <name>=<ref>]... [--keep <keys> | --keep-none]
 #   deploy.sh --app <app> --delivery <dir> destroy feature-<key>
+#   deploy.sh --app <app> --delivery <dir> sweep --keep <keys> | --keep-none
 #   deploy.sh watchdog
 #
 #   --app       The App, as the entry command worked it out. Never from a delivery's arguments.
@@ -15,13 +16,16 @@
 #               job's registry token.
 #
 # Operations:
-#   deploy <environment> --image <name>=<ref>...
+#   deploy <environment> --image <name>=<ref>... [--keep <keys> | --keep-none]
 #       Deploys the delivered template to the Environment, with each image reaching the template
 #       as ${DEADLIFT_IMAGE_<NAME>}. A Feature Environment, feature-<key>, takes a free Slot of
 #       the App's, or the one its key already holds, and is skipped when none is free. A
 #       redeploy keeps the Environment's Slot, URL and volumes, and a failed one leaves it
 #       stopped. A Feature deploy is skipped when the disk is over the Server's lower threshold,
-#       so what's left goes to the Dev Environments.
+#       so what's left goes to the Dev Environments. With --keep or --keep-none, a Feature deploy
+#       first sweeps the App as `sweep` does, always keeping the Environment it deploys, so Slots
+#       held by keys no longer kept are free for it. It sweeps only once the template is checked
+#       and the images pulled, and not at all when it's skipped.
 #
 #       The Dev Environment, dev, is checked and pulled before anything stops, so a bad template
 #       or image reference leaves it running as it was. Then Dev stops, a Volume Snapshot is taken
@@ -36,6 +40,13 @@
 #   destroy feature-<key>
 #       Removes the Feature Environment, its volumes and its Service mapping, and frees its
 #       Slot. Done, changing nothing, when the App has no such Environment.
+#
+#   sweep --keep <keys> | --keep-none
+#       The Sweep: destroys every Feature Environment of the App whose key isn't in <keys>,
+#       separated by commas, or every one with --keep-none, and outputs the swept keys. An empty
+#       <keys> is refused, so a list that failed to come never sweeps everything. It goes on past
+#       an Environment it can't destroy, then fails naming it. The Dev Environment, and other
+#       Apps' Environments, are never swept.
 #
 #   watchdog
 #       Run by the Server's systemd timer, which bootstrap installs, and never by a delivery: it
@@ -119,6 +130,10 @@ health_timeout=300
 snapshot_image=alpine:3.20@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc
 # The --image arguments: each image's reference, by name.
 declare -A images=()
+# --keep or --keep-none: whether either was given, and the Feature Environments to keep.
+keep_given='' keep=()
+# What a Sweep destroyed, and what it couldn't.
+swept=() unswept=()
 
 usage() {
   echo "deadlift: $1" >&2
@@ -324,16 +339,19 @@ held_slots() {
   done | sort -n
 }
 
-# Sets slot to the Slot that $env holds, or the lowest free one. Skips when none is free.
+# Sets slot to the Slot that $env holds, or the lowest free one. With --keep or --keep-none, a
+# Slot held by a Feature Environment that isn't kept counts as free, since the Sweep before the
+# deploy frees it. Skips when none is free, having changed nothing.
 claim_slot() {
-  local held holders s
+  local held holders s holder
   if [[ -f $state/apps/$app/environments/$env/slot ]]; then
     slot=$(<"$state/apps/$app/environments/$env/slot")
     return
   fi
   held=$(held_slots)
   for ((s = 1; s <= slots; s++)); do
-    if ! grep -q "^$s " <<<"$held"; then
+    holder=$(sed -n "s/^$s //p" <<<"$held")
+    if [[ -z $holder ]] || { [[ -n $keep_given ]] && ! is_kept "$holder"; }; then
       slot=$s
       return
     fi
@@ -372,6 +390,8 @@ deploy_feature() {
   check_template "$next"
   write_override "$next" "$port"
   pull_images
+  # Only now, so a template refused or an image that can't be pulled sweeps nothing.
+  if [[ -n $keep_given ]]; then sweep_before_deploy; fi
 
   mkdir -p "$dir"
   cp "$next/compose.yaml" "$next/secrets.env" "$next/vars.env" "$next/secret" "$next/override.json" \
@@ -383,7 +403,7 @@ deploy_feature() {
     ! compose "$dir" up --detach --pull never --no-recreate --no-deps --wait \
       --wait-timeout "$health_timeout" "$routed" 2>&1 | tee "$log" >&2; then
     compose "$dir" stop >/dev/null 2>&1 || true
-    fail "$env didn't start: $(tail -n 1 "$log"). It's stopped, and the App's other Environments are as they were"
+    fail "$env didn't start: $(tail -n 1 "$log"). It's stopped, and the App's other Environments are as they were${swept[*]:+ after sweeping $(sentence "${swept[@]}")}"
   fi
   if ! tailscale serve --service="svc:$app" --https="$public" --bg "http://127.0.0.1:$port" >&2; then
     compose "$dir" stop >/dev/null 2>&1 || true
@@ -392,7 +412,20 @@ deploy_feature() {
 
   output environment "$env"
   output url "$url"
-  echo "deadlift: deployed $env, which is up at $url" >&2
+  echo "deadlift: deployed $env, which is up at $url${swept[*]:+, and swept $(sentence "${swept[@]}")}" >&2
+}
+
+# For a Feature deploy with --keep or --keep-none: sweeps the App, $env always kept. Fails if a
+# destroy that failed left the Slot claim_slot picked held.
+sweep_before_deploy() {
+  local holder
+  sweep_features
+  ((${#unswept[@]})) || return 0
+  holder=$(held_slots | sed -n "s/^$slot //p")
+  if [[ -n $holder && $holder != "$env" ]]; then
+    fail "couldn't destroy $holder (above) to free Slot $slot, so $env wasn't deployed${swept[*]:+. Swept $(sentence "${swept[@]}")}"
+  fi
+  echo "deadlift: couldn't destroy $(sentence "${unswept[@]}") (above), which the next Sweep tries again" >&2
 }
 
 # Removes the Slot's public port from the App's Service, if it's mapped. A Feature Environment
@@ -422,7 +455,6 @@ remove_project() {
 # Slot held, and running it again finishes the job.
 destroy_feature() {
   local env=$1 dir=$state/apps/$app/environments/$1 slot=''
-  output environment "$env"
   if [[ ! -d $dir ]]; then
     echo "deadlift: $env isn't on this Server, so there was nothing to destroy" >&2
     return
@@ -434,8 +466,67 @@ destroy_feature() {
   fi
   remove_project "deadlift-$app-$env" ||
     fail "couldn't remove all of $env's containers, volumes and networks. It's no longer mapped, and it keeps its Slot until destroy is run again"
-  rm -rf "${dir:?}"
+  rm -rf "${dir:?}" ||
+    fail "removed $env's containers, volumes and networks, but not its state, so it keeps its Slot until destroy is run again"
   echo "deadlift: destroyed $env with its volumes${slot:+, freeing Slot $slot}" >&2
+}
+
+# Prints the App's Feature Environments, one per line. One whose destroy stopped partway is
+# still listed, because its state goes last.
+feature_environments() {
+  local dir
+  for dir in "$state/apps/$app/environments"/feature-*/; do
+    if [[ -d $dir ]]; then basename "$dir"; fi
+  done
+}
+
+# Sets keep to the Feature Environments named by $1, keys separated by commas. Refuses a key that
+# isn't one, and a list with no key in it: an empty list, as from a failed API call, would sweep
+# everything, and only --keep-none may.
+read_keep() {
+  local key
+  local -a keys
+  [[ -z $keep_given ]] || usage "give either --keep or --keep-none, and only once"
+  keep_given=yes
+  IFS=, read -ra keys <<<"$1"
+  for key in "${keys[@]}"; do
+    [[ -n $key ]] || continue
+    [[ $key =~ ^[a-z0-9][a-z0-9-]{0,29}$ ]] ||
+      usage "'$key' in --keep isn't a Feature Environment key: up to 30 of a-z, 0-9 and -"
+    keep+=("feature-$key")
+  done
+  ((${#keep[@]})) ||
+    refuse "--keep lists no key, so nothing was swept or deployed. Give --keep-none to sweep every Feature Environment"
+}
+
+# For --keep-none: keep no Feature Environment.
+read_keep_none() {
+  [[ -z $keep_given ]] || usage "give either --keep or --keep-none, and only once"
+  keep_given=yes
+}
+
+# Whether the Feature Environment $1 is kept.
+is_kept() {
+  local kept
+  for kept in "${keep[@]}"; do
+    if [[ $kept == "$1" ]]; then return 0; fi
+  done
+  return 1
+}
+
+# Sweeps the App: destroys every Feature Environment of it that isn't kept, going on past one
+# that fails. Sets swept to the ones destroyed and unswept to the ones that weren't, and outputs
+# the swept keys for `deliver`.
+sweep_features() {
+  local each keys
+  swept=() unswept=()
+  while IFS= read -r each; do
+    if is_kept "$each"; then continue; fi
+    # In a subshell, because a destroy exits when it fails.
+    if (destroy_feature "$each"); then swept+=("$each"); else unswept+=("$each"); fi
+  done < <(feature_environments)
+  keys=("${swept[@]#feature-}")
+  output swept "$(IFS=, && echo "${keys[*]}")"
 }
 
 # Starts the Environment whose files are in $1, which routes to the service $2, and waits for
@@ -729,12 +820,24 @@ op_deploy() {
         images[${BASH_REMATCH[1]}]=${BASH_REMATCH[2]}
         shift 2
         ;;
+      --keep)
+        [[ $# -ge 2 ]] || usage "--keep needs the keys of the Feature Environments to keep"
+        read_keep "$2"
+        shift 2
+        ;;
+      --keep-none) read_keep_none && shift ;;
       *) usage "unknown argument '$1' for deploy" ;;
     esac
   done
   case $env in
-    feature-*) check_feature_key ;;
-    dev) ;;
+    feature-*)
+      check_feature_key
+      # The Environment being deployed is always kept.
+      keep+=("$env")
+      ;;
+    dev)
+      [[ -z $keep_given ]] || usage "--keep and --keep-none are for a Feature deploy, and dev is the Dev Environment"
+      ;;
     *) usage "'$env' isn't an Environment: dev or feature-<key>" ;;
   esac
   read_app
@@ -753,7 +856,39 @@ op_destroy() {
   esac
   read_app
   take_lock
+  output environment "$env"
   destroy_feature "$env"
+}
+
+op_sweep() {
+  local remaining
+  while (($#)); do
+    case $1 in
+      --keep)
+        [[ $# -ge 2 ]] || usage "--keep needs the keys of the Feature Environments to keep"
+        read_keep "$2"
+        shift 2
+        ;;
+      --keep-none) read_keep_none && shift ;;
+      *) usage "unknown argument '$1' for sweep" ;;
+    esac
+  done
+  [[ -n $keep_given ]] ||
+    refuse "sweep needs --keep with the keys of the Feature Environments to keep, or --keep-none to sweep them all. Nothing was swept"
+  read_app
+  take_lock
+  sweep_features
+  mapfile -t remaining < <(feature_environments)
+  if ((${#unswept[@]})); then
+    fail "couldn't destroy $(sentence "${unswept[@]}") (above)${swept[*]:+, after sweeping $(sentence "${swept[@]}")}. Sweep again to finish"
+  fi
+  if ((${#swept[@]})); then
+    echo "deadlift: swept $(sentence "${swept[@]}")${remaining[*]:+, keeping $(sentence "${remaining[@]}")}" >&2
+  elif ((${#remaining[@]})); then
+    echo "deadlift: swept nothing: $app's Feature Environments, $(sentence "${remaining[@]}"), are all kept" >&2
+  else
+    echo "deadlift: swept nothing: $app has no Feature Environments" >&2
+  fi
 }
 
 # Stops the running containers of the Feature Environment $1 of the App $2, keeping everything
@@ -824,5 +959,6 @@ done
 case ${1:-} in
   deploy) shift && op_deploy "$@" ;;
   destroy) shift && op_destroy "$@" ;;
+  sweep) shift && op_sweep "$@" ;;
   *) usage "'${1:-}' isn't an operation" ;;
 esac
