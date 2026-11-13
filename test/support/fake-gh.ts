@@ -1,5 +1,5 @@
-// A fake `gh` CLI, standing in for GitHub's REST API in tests of deadlift's actions. Only
-// `gh api` is supported, for the endpoints the actions use. It reads and writes the GitHub state
+// A fake `gh` CLI, standing in for GitHub's REST API in tests of deadlift's actions and starter
+// workflows. Only `gh api` is supported, for the endpoints they use. It reads and writes the GitHub state
 // in $FAKE_GITHUB_STATE (see fake-github.ts), so a test sees what the action changed.
 //
 // Behaves like the real `gh api` where the actions depend on it: it needs GH_TOKEN, pages with
@@ -144,7 +144,9 @@ function handle(
     let sha: string | undefined = repo.branches[query.get("sha") ?? ""] ?? query.get("sha") ?? undefined;
     if (!sha || !(sha in repo.commits)) throw new HttpError(404, "No commit found for SHA");
     const history = [];
-    for (; sha; sha = repo.commits[sha]?.[0]) history.push({ sha });
+    for (; sha && history.length <= Object.keys(repo.commits).length; sha = repo.commits[sha]?.[0]) {
+      history.push({ sha });
+    }
     return history;
   }
   if (method === "GET" && (m = route.match(/^repos\/([^/]+\/[^/]+)$/))) {

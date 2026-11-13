@@ -308,3 +308,190 @@ describe("deadlift-feature on close", () => {
     expect(fake.comments(42)[0].body).toContain(reason);
   });
 });
+
+describe("deadlift-dev", () => {
+  const push = (fake: ReturnType<typeof app>, branch: string, commit = sha("d")) =>
+    fake.run("deadlift-dev", { name: "push", payload: { ref: `refs/heads/${branch}` } }, {
+      ref: `refs/heads/${branch}`,
+      sha: commit,
+    });
+
+  it("builds a push to main and deploys it to dev, unless main has moved past it", () => {
+    const fake = app();
+
+    const run = push(fake, "main");
+
+    expect(run.jobs.deploy.result, run.stderr).toBe("success");
+    expect(run.asked("superseded")).toEqual([expect.objectContaining({ branch: "main" })]);
+    expect(run.asked("build")).toEqual([expect.objectContaining({ images: "web\n" })]);
+    expect(run.delivered).toEqual([
+      expect.objectContaining({
+        app: "shop",
+        server: "deadlift-1",
+        operation: "deploy",
+        environment: "dev",
+        images: `web=ghcr.io/${repo}/web:sha-push`,
+      }),
+    ]);
+  });
+
+  it("deploys nothing when main has moved past the commit", () => {
+    const fake = app();
+    fake.supersededAnswers({
+      superseded: "true",
+      head: sha("e"),
+      reason: `deadlift: main has moved past ${sha("d")} to ${sha("e")}`,
+    });
+
+    const run = push(fake, "main");
+
+    expect(run.jobs.deploy.result, run.stderr).toBe("success");
+    expect(run.delivered).toEqual([]);
+    expect(run.summary).toContain("main has moved past");
+  });
+
+  it("runs for pushes to the tracked branch only, which init can change", () => {
+    expect(push(app(), "feature/x").triggered).toBe(false);
+    const release = app({}, ["--branch", "release/2.x"]);
+    expect(push(release, "main").triggered).toBe(false);
+    const run = push(release, "release/2.x");
+    expect(run.asked("superseded")).toEqual([expect.objectContaining({ branch: "release/2.x" })]);
+    expect(run.delivered).toHaveLength(1);
+  });
+
+  it("builds and deploys every image init was given", () => {
+    const fake = app({}, ["--image", "web", "--image", "worker"]);
+
+    const run = push(fake, "main");
+
+    expect(run.asked("build")).toEqual([expect.objectContaining({ images: "web\nworker\n" })]);
+    expect(run.delivered[0].images).toBe(
+      `web=ghcr.io/${repo}/web:sha-push\nworker=ghcr.io/${repo}/worker:sha-push`,
+    );
+  });
+});
+
+describe("deadlift-sweep", () => {
+  const sweep = (fake: ReturnType<typeof app>, event = "schedule") => fake.run("deadlift-sweep", { name: event });
+  // main's history: c1 <- c2 <- ... <- c12.
+  const history = Array.from({ length: 12 }, (_, i) => String(i + 1).padStart(2, "0").padEnd(40, "c"));
+  const main = {
+    branches: { main: history[11] },
+    commits: Object.fromEntries(history.map((c, i) => [c, i ? [history[i - 1]] : []])),
+  };
+
+  it("sweeps every Feature Environment but the open pull requests', then prunes the registry", () => {
+    const fake = app({
+      ...main,
+      pulls: [
+        pull(42, sha("a")),
+        pull(57, sha("b")),
+        pull(60, sha("f"), { head: { sha: sha("f"), repo: { full_name: "someone/shop" } } }),
+        pull(13, sha("c"), { state: "closed" }),
+      ],
+    });
+    fake.deliverAnswers({ outcome: "done", reason: "deadlift: swept feature-13", swept: "13" });
+
+    const run = sweep(fake);
+
+    expect(run.jobs["prune-registry"].result, run.stderr).toBe("success");
+    expect(run.delivered).toEqual([
+      expect.objectContaining({ app: "shop", server: "deadlift-1", operation: "sweep", keep: "42,57", "keep-none": "false" }),
+    ]);
+    const pruned = run.asked("prune-registry");
+    expect(pruned).toHaveLength(1);
+    expect(pruned[0].images).toBe("web");
+    // The open pull requests' heads, and main's last 10 commits.
+    expect(pruned[0].keep.split(",").sort()).toEqual(
+      [`sha-${sha("a")}`, `sha-${sha("b")}`, ...history.slice(2).map((c) => `sha-${c}`)].sort(),
+    );
+  });
+
+  it("keeps none when no pull request is open", () => {
+    const fake = app({ ...main, pulls: [pull(13, sha("c"), { state: "closed" })] });
+
+    const run = sweep(fake, "workflow_dispatch");
+
+    expect(run.delivered).toEqual([expect.objectContaining({ operation: "sweep", keep: "", "keep-none": "true" })]);
+  });
+
+  it("sweeps nothing and prunes nothing when it can't list the open pull requests", () => {
+    const fake = app({ ...main, pulls: [pull(42, sha("a"))] });
+    fake.github.update((s) => (s.failures = [{ method: "GET", pathPrefix: `repos/${repo}/pulls`, status: 502 }]));
+
+    const run = sweep(fake);
+
+    expect(run.jobs.sweep.result).toBe("failure");
+    expect(run.used.filter((u) => u.action.startsWith("hangindev/"))).toEqual([]);
+  });
+
+  it("prunes nothing when the Sweep failed", () => {
+    const fake = app({ ...main, pulls: [pull(42, sha("a"))] });
+    fake.deliverAnswers({ outcome: "failed", reason: "deadlift: couldn't reach deadlift-1 over SSH" });
+
+    const run = sweep(fake);
+
+    expect(run.asked("prune-registry")).toEqual([]);
+  });
+
+  it("prunes every image init was given", () => {
+    const fake = app({ ...main, pulls: [pull(42, sha("a"))] }, ["--image", "web", "--image", "worker"]);
+
+    expect(sweep(fake).asked("prune-registry")[0].images).toBe("web worker");
+  });
+
+  it("keeps the tracked branch's commits when init was given another branch", () => {
+    const fake = app(
+      { branches: { "release/2.x": history[11] }, commits: main.commits, pulls: [] },
+      ["--branch", "release/2.x"],
+    );
+
+    const run = sweep(fake);
+
+    expect(run.asked("prune-registry")[0].keep).toContain(`sha-${history[11]}`);
+  });
+});
+
+describe("deadlift-rollback", () => {
+  const rollback = (fake: ReturnType<typeof app>, inputs?: Record<string, Value>) =>
+    fake.run("deadlift-rollback", { name: "workflow_dispatch", inputs });
+
+  it("rolls dev back by hand, keeping today's data unless asked otherwise", () => {
+    const fake = app();
+
+    expect(rollback(fake).delivered).toEqual([
+      expect.objectContaining({
+        app: "shop",
+        server: "deadlift-1",
+        operation: "rollback",
+        environment: "dev",
+        "discard-newer-data": "false",
+      }),
+    ]);
+    expect(rollback(fake, { "discard-newer-data": true }).delivered).toEqual([
+      expect.objectContaining({ operation: "rollback", environment: "dev", "discard-newer-data": "true" }),
+    ]);
+  });
+
+  it("runs only by hand", () => {
+    expect(app().run("deadlift-rollback", { name: "push" }).triggered).toBe(false);
+  });
+});
+
+describe("the starter workflows", () => {
+  it("use deadlift's actions at @v1", () => {
+    const fake = app({ pulls: [pull(42, sha("a"))], branches: { main: sha("d") }, commits: { [sha("d")]: [] } });
+    const runs = [
+      fake.pullRequest("opened", pull(42, sha("a"))),
+      fake.run("deadlift-dev", { name: "push" }, { ref: "refs/heads/main", sha: sha("d") }),
+      fake.run("deadlift-sweep", { name: "schedule" }),
+      fake.run("deadlift-rollback", { name: "workflow_dispatch" }),
+    ];
+
+    const deadliftActions = runs.flatMap((r) => r.used).filter((u) => u.action.startsWith("hangindev/deadlift/"));
+    expect(new Set(deadliftActions.map((u) => u.action))).toEqual(
+      new Set(["build", "deliver", "superseded", "prune-registry"].map((a) => `hangindev/deadlift/actions/${a}`)),
+    );
+    expect(new Set(deadliftActions.map((u) => u.ref))).toEqual(new Set(["v1"]));
+  });
+});

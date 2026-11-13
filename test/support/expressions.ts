@@ -16,7 +16,10 @@ export interface Scope {
 
 /** An object filter's result (`labels.*.name`), which further properties map over. */
 class Filtered {
-  constructor(readonly items: Value[]) {}
+  readonly items: Value[];
+  constructor(items: Value[]) {
+    this.items = items;
+  }
 }
 type Result = Value | Filtered | undefined;
 
