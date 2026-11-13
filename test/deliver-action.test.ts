@@ -151,6 +151,30 @@ describe("the deliver action", () => {
     expect(fake.deliveries()).toEqual([]);
   });
 
+  it("explains the delivery in the job summary", () => {
+    const fake = runner();
+    fake.serverAnswers(`deadlift-output: swept=7,9\n${deployed}`);
+
+    const run = fake.deliver({ operation: "deploy", environment: "feature-42", images: "web=x:1", keep: "42" });
+
+    expect(run.summary).toContain("deadlift deploy feature-42: done");
+    expect(run.summary).toContain(
+      "deadlift: deployed feature-42, which is up at https://shop.tailtest.ts.net:10001/",
+    );
+    expect(run.summary).toMatch(/Address: https:\/\/shop\.tailtest\.ts\.net:10001\//);
+    expect(run.summary).toMatch(/Swept: 7, 9/);
+  });
+
+  it("explains a failure in the job summary, even when the Server gave no reason", () => {
+    const fake = runner();
+    fake.serverAnswers("Killed\n", 1);
+
+    const run = fake.deliver({ operation: "destroy", environment: "feature-42" });
+
+    expect(run.summary).toContain("deadlift destroy feature-42: failed");
+    expect(run.summary).toMatch(/gave no reason/);
+  });
+
   it("passes a skipped delivery, saying why", () => {
     const fake = runner();
     const reason = "deadlift: not deployed, because no Slot is free: feature-7, feature-9 hold them all";
