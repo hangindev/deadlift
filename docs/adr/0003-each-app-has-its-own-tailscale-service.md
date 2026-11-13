@@ -23,7 +23,7 @@ flowchart LR
   end
 ```
 
-Adding an App creates its Service, from the owner's computer, so the Server still holds no Tailscale credential. The tailnet policy auto-approves Services tagged for deadlift on the deadlift Server, and grants access to each one.
+Adding an App creates its Service, from the owner's computer, so the Server still holds no Tailscale credential. The tailnet policy needs no change per App for its Service: one `autoApprovers` entry approves every Service tagged for deadlift on a deadlift Server, and one grant by that tag lets the tailnet reach them all.
 
 ## Considered Options
 
@@ -36,11 +36,13 @@ Adding an App creates its Service, from the owner's computer, so the Server stil
 - A tailnet has at most 10 Tailscale Services, so at most 10 Apps across all its deadlift Servers. We'll deal with that limit when we reach it.
 - The Server must be tagged and run Tailscale 1.86 or later. Devices on Linux with Tailscale 1.93 or earlier need `--accept-routes` to reach a Service.
 
-## Unverified
+## Verified
 
-These weren't confirmed from Tailscale's documentation. The run on a throwaway Server must settle them before any App relies on them:
+Checked on 2026-11-13 with Tailscale 1.104.7, on a tagged host serving one test Service:
 
-- **A Service serving Feature Environments on extra ports.** A Service's definition lists its ports (or `do-not-validate`), and it isn't documented whether one Service can serve HTTPS on many ports that come and go with Slots, or whether each port needs approving. If not, Feature Environments go back to ports on the Server's own name.
-- **Auto-approval by tag**: whether `autoApprovers` keyed on the Service's tag approves a newly defined Service on the Server without a human.
-- **Grants by tag**: whether a grant's `dst` can name Services by tag. If not, adding an App adds a grant for its `svc:<app>`.
-- **Federated credentials**: whether a Tailscale federated credential can create Services. This only matters if adding an App ever moves into CI.
+- **Feature Environments on extra ports of one Service: yes.** Serving a port the Service's definition doesn't list worked, and so did adding and removing ports while it ran, with no approval and no interruption to 443. deadlift still lists the Dev port and every Slot's port in the definition, so nothing changes if Tailscale starts enforcing the list.
+- **Auto-approval by tag: yes.** With `autoApprovers` keyed on the Service's tag, the host was approved as soon as it served the Service, with no human.
+- **Grants by tag: yes.** A grant whose `dst` names the Services' tag, with no grant for the Service by name, let a tailnet device reach it.
+- **Federated credentials: the API accepts a GitHub federated credential with only the `services` scope.** Creating a Service through one wasn't tried, which only matters if adding an App ever moves into CI.
+- **Creating a Service through the API** works with a body of `name`, `comment`, `ports` and `tags`, and returns the Service's own tailnet addresses.
+- **A new Service can take some seconds to become reachable** after its host first serves it.
