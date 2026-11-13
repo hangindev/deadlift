@@ -31,10 +31,12 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm check-types
-      # The runner image ships shellcheck.
+      # The runner image ships shellcheck. It checks what's still Bash: the files with a shell's
+      # shebang, so each one ported to Python drops out by itself.
       - run: >-
           find bin cli server actions test/*.sh test/fakes test/support test/server-setup -type f
-          ! -name '*.yml' ! -name '*.ts' ! -name '*.hujson' -print0 | xargs -0 shellcheck
+          ! -name '*.yml' ! -name '*.ts' ! -name '*.hujson' ! -name '*.py' -print0 |
+          xargs -0 grep -lZ -E '^#!(/usr/bin/env (ba)?sh|/bin/(ba)?sh)' | xargs -0 -r shellcheck
       # The workflows, the composite actions written out as workflows, and the starter workflows
       # as `deadlift init` writes them.
       - run: test/actionlint.sh
