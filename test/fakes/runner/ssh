@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# A fake `ssh` on a fake CI runner, for testing the deliver action through its action.yml. It
+# stands in for a whole Server: it keeps each delivery it's sent (who it logged in as, the words
+# the remote shell would run, and what the tar held) and answers as the test set up.
+#
+#   ssh [-o option]... <user>@<host> <command>...
+#
+# State, in $FAKE_RUNNER_STATE:
+#   server-reply, server-status   What the Server prints, and its exit code (0 when unset).
+#   ssh/<n>/                      The nth delivery: destination, args (the remote command's words,
+#                                 as JSON) and delivery/ (the tar's members).
+set -euo pipefail
+
+state=${FAKE_RUNNER_STATE:?the fake ssh needs FAKE_RUNNER_STATE}
+printf 'ssh %s\n' "$*" >>"$state/calls.log"
+
+while (($#)); do
+  case $1 in
+    -o) shift 2 ;;
+    -*) echo "fake ssh: unknown option $1" >&2 && exit 255 ;;
+    *) break ;;
+  esac
+done
+destination=${1:?fake ssh: no destination}
+shift
+
+mkdir -p "$state/ssh"
+n=$(find "$state/ssh" -mindepth 1 -maxdepth 1 | wc -l)
+call=$state/ssh/$((n + 1))
+mkdir -p "$call/delivery"
+printf '%s\n' "$destination" >"$call/destination"
+# The remote shell splits the command line into words, undoing the client's quoting.
+words=()
+eval "words=($*)"
+jq -n '$ARGS.positional' --args -- "${words[@]}" >"$call/args"
+tar -xf - -C "$call/delivery"
+
+cat "$state/server-reply" 2>/dev/null || true
+exit "$(cat "$state/server-status" 2>/dev/null || echo 0)"
