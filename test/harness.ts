@@ -349,9 +349,14 @@ export async function startHarness() {
         });
     }
 
-    /** The Docker containers of one App, by name. */
+    /** The names of one App's Docker containers, running or not. */
     function containers(app: string) {
       return docker("ps", "--all", "--format", "{{.Names}}", "--filter", `name=^deadlift-${app}-`);
+    }
+
+    /** The names of one App's running Docker containers. */
+    function runningContainers(app: string) {
+      return docker("ps", "--format", "{{.Names}}", "--filter", `name=^deadlift-${app}-`);
     }
 
     return {
@@ -364,6 +369,7 @@ export async function startHarness() {
       tailscaleCalls,
       holdLock,
       containers,
+      runningContainers,
     };
   }
 

@@ -217,7 +217,7 @@ deploy_feature() {
   log=$delivery/up.log
   echo "Starting $env"
   if ! compose "$dir" up --detach --pull never --remove-orphans 2>&1 | tee "$log" >&2 ||
-    ! compose "$dir" up --detach --pull never --no-recreate --wait \
+    ! compose "$dir" up --detach --pull never --no-recreate --no-deps --wait \
       --wait-timeout "$health_timeout" "$routed" 2>&1 | tee "$log" >&2; then
     compose "$dir" stop >/dev/null 2>&1 || true
     fail "$env didn't start: $(tail -n 1 "$log"). It's stopped, and the App's other Environments are as they were"
