@@ -80,7 +80,11 @@ describe.skipIf(why !== undefined)("an App's containers on a bootstrapped Server
     server = await harness.server();
     app = server.apps.a.name;
     await exec("sudo", ["bash", outside, "up", outsideName, String(outsidePort)]);
-    listener = createServer((socket) => socket.end("the host\n"));
+    listener = createServer((socket) => {
+      // The probes only connect, then drop the connection.
+      socket.on("error", () => undefined);
+      socket.end("the host\n");
+    });
     await new Promise<void>((resolve) => listener.listen(0, "0.0.0.0", resolve));
     const address = listener.address();
     if (typeof address !== "object" || address === null) throw new Error("no port");
