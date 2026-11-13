@@ -64,9 +64,9 @@ function world() {
       return read(join(dir, "opened")).split("\n").filter(Boolean);
     },
 
-    /** Runs `deadlift server provision`, with the human taking each turn in order. */
-    provision(turns: Turn[]): Promise<Run> {
-      const child = spawn(join(repo, "bin/deadlift"), ["server", "provision"], {
+    /** Runs `deadlift server provision [args]`, with the human taking each turn in order. */
+    provision(turns: Turn[], args: string[] = []): Promise<Run> {
+      const child = spawn(join(repo, "bin/deadlift"), ["server", "provision", ...args], {
         env: {
           PATH: `${bin}:/usr/local/bin:/usr/bin:/bin`,
           HOME: join(dir, "home"),
@@ -97,6 +97,7 @@ function world() {
             const timer = setTimeout(() => fail("timed out"), 20_000);
             const fail = (why: string) => {
               clearTimeout(timer);
+              child.kill("SIGKILL");
               reject(new Error(`${why} waiting for ${turn.on} after:\n${output.slice(cursor)}`));
             };
             changed = () => {
@@ -170,5 +171,121 @@ describe("deadlift server provision", () => {
     expect(w.tailnet("203.0.113.7")).toEqual({ name: "deadlift-1", tags: ["tag:deadlift-server"] });
     expect(run.output).toMatch(/SSH on 203\.0\.113\.7 no longer answers/);
     expect(run.output).toMatch(/deadlift app add <app> --server deadlift-1 --repo <owner\/name>/);
+  });
+
+  test("prints the policy entries set once per tailnet, covering every App's Service by its tag", async () => {
+    const w = world();
+    const run = await w.provision(wholeRun(w, "deadlift-1", "203.0.113.7", { on: /Saved\?/ }));
+
+    expect(run.code, run.output).toBe(0);
+    expect(w.opened()).toContain("https://login.tailscale.com/admin/acls/file");
+    const policy = printedPolicy(run.output);
+    expect(Object.keys(policy.tagOwners).sort()).toEqual(["tag:deadlift-server", "tag:deadlift-svc"]);
+    expect(policy.autoApprovers).toEqual({ services: { "tag:deadlift-svc": ["tag:deadlift-server"] } });
+    // Dev at 443, and Slots 1 to 9 at 10000 + Slot.
+    expect(policy.grants).toContainEqual({
+      src: ["autogroup:member"],
+      dst: ["tag:deadlift-svc"],
+      ip: ["tcp:443", "tcp:10001-10009"],
+    });
+    // Nothing per App or per Service: those come from `deadlift app add`.
+    expect(JSON.stringify(policy)).not.toMatch(/svc:|deadlift-ci|deadlift-1/);
+  });
+
+  test("a second Server on the same tailnet reuses the policy entries and asks for nothing new", async () => {
+    const w = world();
+    const first = await w.provision(wholeRun(w, "deadlift-1", "203.0.113.7", { on: /Saved\?/ }));
+    expect(first.code, first.output).toBe(0);
+    const openedBefore = w.opened().length;
+
+    const second = await w.provision(
+      wholeRun(w, "deadlift-2", "203.0.113.8", { on: /already has a deadlift Server[\s\S]*Continue\?/ }),
+    );
+
+    expect(second.code, second.output).toBe(0);
+    expect(second.output).toMatch(/nothing to add/);
+    expect(second.output).not.toMatch(/autoApprovers|tagOwners|Saved\?/);
+    expect(w.opened().slice(openedBefore)).not.toContain("https://login.tailscale.com/admin/acls/file");
+    expect(w.bootstraps("203.0.113.8")).toEqual(["public"]);
+    expect(w.tailnet("203.0.113.8")).toEqual({ name: "deadlift-2", tags: ["tag:deadlift-server"] });
+  });
+
+  test("waits for each step's confirmation, and carries on with the saved answers after Ctrl-C", async () => {
+    const w = world();
+    const interrupted = await w.provision([
+      { on: /Ready to start\?/ },
+      { on: /Saved\?/ },
+      { on: /such as deadlift-1/, answer: "deadlift-1" },
+      { on: /Create & Buy now/, answer: "203.0.113.7", then: () => w.buy("203.0.113.7") },
+      {
+        on: /Created and applied\?/,
+        // Nothing is run on the machine while the maintainer is still setting its firewall up.
+        then: () => expect(w.bootstraps("203.0.113.7")).toEqual([]),
+        interrupt: true,
+      },
+    ]);
+    expect(interrupted.code).not.toBe(0);
+    expect(w.bootstraps("203.0.113.7")).toEqual([]);
+
+    const resumed = await w.provision([
+      { on: /Ready to start\?/ },
+      { on: /earlier run[\s\S]*Continue\?/ },
+      { on: /such as deadlift-1/, answer: "" },
+      { on: /Create & Buy now/, answer: "" },
+      { on: /Created and applied\?/ },
+      { on: /Bootstrapped\? Continue\?/ },
+      { on: /Copy the Tailnet DNS name/, answer: "" },
+      { on: /Continue\?/ },
+      { on: /Deleted\?/, then: () => w.closePublicSsh("203.0.113.7") },
+    ]);
+
+    expect(resumed.code, resumed.output).toBe(0);
+    expect(resumed.output).not.toMatch(/autoApprovers/);
+    expect(w.bootstraps("203.0.113.7")).toEqual(["public"]);
+    expect(w.tailnet("203.0.113.7")).toEqual({ name: "deadlift-1", tags: ["tag:deadlift-server"] });
+  });
+
+  test("resumed after joining the tailnet, it bootstraps over the tailnet and doesn't join again", async () => {
+    const w = world();
+    const interrupted = await w.provision([
+      ...wholeRun(w, "deadlift-1", "203.0.113.7", { on: /Saved\?/ }).slice(0, 7),
+      { on: /Continue\?/, interrupt: true, then: () => w.closePublicSsh("203.0.113.7") },
+    ]);
+    expect(interrupted.code).not.toBe(0);
+
+    const resumed = await w.provision([
+      { on: /Ready to start\?/ },
+      { on: /Continue\?/ },
+      { on: /such as deadlift-1/, answer: "" },
+      { on: /Create & Buy now/, answer: "" },
+      { on: /Continue\?/ },
+      { on: /Bootstrapped\? Continue\?/ },
+      { on: /already answers over the tailnet[\s\S]*Continue\?/ },
+    ]);
+
+    expect(resumed.code, resumed.output).toBe(0);
+    expect(resumed.output).not.toMatch(/Deleted\?/);
+    expect(resumed.output).toMatch(/SSH on 203\.0\.113\.7 no longer answers/);
+    expect(w.bootstraps("203.0.113.7")).toEqual(["public", "tailnet"]);
+  });
+
+  test("refuses arguments, starting nothing", async () => {
+    const run = await world().provision([], ["deadlift-1"]);
+
+    expect(run.code).toBe(2);
+    expect(run.output).toMatch(/^deadlift: server provision takes no arguments/);
+    expect(run.output).not.toMatch(/Ready to start/);
+  });
+
+  test("doesn't take the maintainer's word that public SSH is closed", async () => {
+    const w = world();
+    const run = await w.provision([
+      ...wholeRun(w, "deadlift-1", "203.0.113.7", { on: /Saved\?/ }).slice(0, 8),
+      { on: /Deleted\?/ },
+      { on: /SSH on 203\.0\.113\.7 still answers[\s\S]*Check again\?/, answer: "y", then: () => w.closePublicSsh("203.0.113.7") },
+    ]);
+
+    expect(run.code, run.output).toBe(0);
+    expect(run.output).toMatch(/SSH on 203\.0\.113\.7 no longer answers/);
   });
 });

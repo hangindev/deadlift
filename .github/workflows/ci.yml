@@ -33,8 +33,8 @@ jobs:
       - run: pnpm check-types
       # The runner image ships shellcheck.
       - run: >-
-          find bin server actions test/*.sh test/fakes test/support test/seam-b -type f
-          ! -name '*.yml' ! -name '*.ts' -print0 | xargs -0 shellcheck
+          find bin cli server actions test/*.sh test/fakes test/support test/seam-b -type f
+          ! -name '*.yml' ! -name '*.ts' ! -name '*.hujson' -print0 | xargs -0 shellcheck
       # The workflows, and the composite actions written out as workflows.
       - run: test/actionlint.sh
 

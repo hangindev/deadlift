@@ -63,7 +63,8 @@ fi
 case $command in
   true) ;;
   *'"$d/bootstrap.sh"'*)
-    if ! tar -tf - | grep -qx './bootstrap.sh'; then
+    files=$(tar -tf -)
+    if ! grep -qx './bootstrap.sh' <<<"$files"; then
       echo "fake ssh: bootstrap's tar holds no bootstrap.sh" >&2
       exit 1
     fi
@@ -72,7 +73,8 @@ case $command in
     ;;
   "tailscale up "*)
     tags=''
-    for flag in $command; do
+    read -ra flags <<<"$command"
+    for flag in "${flags[@]}"; do
       case $flag in
         --hostname=*) echo "${flag#--hostname=}" >"$machine/hostname.new" ;;
         --advertise-tags=*) tags=${flag#--advertise-tags=} ;;

@@ -47,7 +47,10 @@ server_bootstrap() {
 }
 
 case "${1:-} ${2:-}" in
-  "server provision") shift 2 && exec "$root/cli/provision.sh" "$@" ;;
+  "server provision")
+    (($# == 2)) || usage "server provision takes no arguments: it asks for what it needs"
+    exec "$root/cli/provision.sh"
+    ;;
   "server bootstrap") shift 2 && server_bootstrap "$@" ;;
   *) usage "'${*}' isn't a command" ;;
 esac
