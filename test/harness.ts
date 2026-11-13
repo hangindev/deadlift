@@ -228,8 +228,18 @@ export async function startHarness() {
 
   /** A fresh Server holding two Apps, `a` and `b`, with no Environments yet. Each App has
    * `slots` Slots and, when given, the number of Volume Snapshots to keep and the per-container
-   * `limits` `deadlift app add` sets. */
-  async function server(options: { slots?: number; snapshots?: number; limits?: Limits } = {}) {
+   * `limits` `deadlift app add` sets. Its disk is `diskUsed` percent full, 50 unless given, in
+   * place of measuring this machine's, which may be fuller than a Server's thresholds allow.
+   * `settings` is the Server-wide settings file as bootstrap writes it; without it there's none. */
+  async function server(
+    options: {
+      slots?: number;
+      snapshots?: number;
+      limits?: Limits;
+      diskUsed?: number;
+      settings?: string;
+    } = {},
+  ) {
     const n = ++serverCount;
     const dir = join(root, `server-${n}`);
     const state = join(dir, "srv");
@@ -258,10 +268,15 @@ export async function startHarness() {
     ]) {
       await chmod(file, 0o755);
     }
-    await writeFile(
-      join(dir, "server.env"),
-      `DEADLIFT_STATE_DIR=${state}\nDEADLIFT_LIB_DIR=${lib}\n`,
-    );
+    /** Sets how full the fake Server's disk is, in percent, as the deploy script will read it. */
+    async function setDiskUsed(percent: number) {
+      await writeFile(
+        join(dir, "server.env"),
+        `DEADLIFT_STATE_DIR=${state}\nDEADLIFT_LIB_DIR=${lib}\nDEADLIFT_DISK_USED=${percent}\n`,
+      );
+    }
+    await setDiskUsed(options.diskUsed ?? 50);
+    if (options.settings !== undefined) await writeFile(join(state, "settings"), options.settings);
 
     // What `deadlift app add` gives each App: its own block of ports, its Slots and its limits.
     const apps: Record<"a" | "b", { name: string; portBase: number }> = {
@@ -395,6 +410,32 @@ export async function startHarness() {
         });
     }
 
+    /** Runs the watchdog as the Server's systemd timer does: the installed deploy script, as
+     * root, in a fresh environment. */
+    async function watchdog(): Promise<Result> {
+      const settings = (await readFile(join(dir, "server.env"), "utf8")).split("\n").filter(Boolean);
+      return collect(
+        "env",
+        [
+          "-i",
+          `PATH=${bin}:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`,
+          ...(process.env.DOCKER_HOST ? [`DOCKER_HOST=${process.env.DOCKER_HOST}`] : []),
+          ...settings,
+          join(lib, "deploy.sh"),
+          "watchdog",
+        ],
+        { env: {} },
+      );
+    }
+
+    /** Whether the Server's Docker holds the image `ref`, as `docker image ls` there would show. */
+    function hasImage(ref: string): Promise<boolean> {
+      return docker("image", "inspect", ref).then(
+        () => true,
+        () => false,
+      );
+    }
+
     /** The names of one App's Docker containers, running or not. */
     function containers(app: string) {
       return docker("ps", "--all", "--format", "{{.Names}}", "--filter", `name=^deadlift-${app}-`);
@@ -443,6 +484,9 @@ export async function startHarness() {
       deliver,
       send,
       secrets,
+      setDiskUsed,
+      watchdog,
+      hasImage,
       serveMappings,
       tailscaleCalls,
       holdLock,

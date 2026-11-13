@@ -10,6 +10,7 @@
 #   deploy.sh --app <app> --delivery <dir> rollback dev [--discard-newer-data]
 #   deploy.sh --app <app> --delivery <dir> destroy feature-<key>
 #   deploy.sh --app <app> --delivery <dir> sweep --keep <keys> | --keep-none
+#   deploy.sh watchdog
 #
 #   --app      The App, as the entry command worked it out. Never from a delivery's arguments.
 #   --delivery  The unpacked delivery: compose.yaml, the App's Compose template, and token, the
@@ -21,10 +22,11 @@
 #       as ${DEADLIFT_IMAGE_<NAME>}. A Feature Environment, feature-<key>, takes a free Slot of
 #       the App's, or the one its key already holds, and is skipped when none is free. A
 #       redeploy keeps the Environment's Slot, URL and volumes, and a failed one leaves it
-#       stopped. With --keep or --keep-none, a Feature deploy first sweeps the App as `sweep`
-#       does, always keeping the Environment it deploys, so Slots held by keys no longer kept
-#       are free for it. It sweeps only once the template is checked and the images pulled, and
-#       not at all when it's skipped.
+#       stopped. A Feature deploy is skipped when the disk is over the Server's lower threshold,
+#       so what's left goes to the Dev Environments. With --keep or --keep-none, a Feature deploy
+#       first sweeps the App as `sweep` does, always keeping the Environment it deploys, so Slots
+#       held by keys no longer kept are free for it. It sweeps only once the template is checked
+#       and the images pulled, and not at all when it's skipped.
 #
 #       The Dev Environment, dev, is checked and pulled before anything stops, so a bad template
 #       or image reference leaves it running as it was. Then Dev stops, a Volume Snapshot is taken
@@ -32,6 +34,9 @@
 #       down, puts the snapshot back and starts the previous version, and the reason says whether
 #       that worked. The new version is recorded as current, and the one before it as previous,
 #       for Rollback.
+#
+#       After every deploy, whatever its outcome, the App's images that no Environment's version
+#       records, of any App, and no container uses are removed from the Server.
 #
 #   rollback dev [--discard-newer-data]
 #       Takes the Dev Environment back to its previous version, which becomes its current
@@ -54,6 +59,16 @@
 #       <keys> is refused, so a list that failed to come never sweeps everything. It goes on past
 #       an Environment it can't destroy, then fails naming it. The Dev Environment, and other
 #       Apps' Environments, are never swept.
+#
+#   watchdog
+#       Run by the Server's systemd timer, which bootstrap installs, and never by a delivery: it
+#       acts on every App. When the disk is over the Server's upper threshold, it stops every
+#       Feature Environment on the Server, keeping their data, state, Slots and Serve mappings,
+#       so each starts again on its next deploy. Dev Environments are never touched.
+#
+# Disk thresholds are the Server-wide settings, in /srv/deadlift/settings (see bootstrap.sh):
+# feature_deploy_disk_limit (80) and watchdog_disk_limit (90), each a percentage of the disk
+# used, measured on the fuller of the filesystems holding the Server's state and Docker's data.
 #
 # A Feature Environment's key is up to 30 of a-z, 0-9 and -, starting with a letter or digit.
 #
@@ -84,6 +99,7 @@
 #
 # State, all root-only, under /srv/deadlift:
 #   lock                            The Server's lock: one operation at a time.
+#   settings                        The Server-wide settings, `name=value` lines, by bootstrap.
 #   apps/<app>/app.conf             The App's entry in the Server registry, written by
 #                                   `deadlift app add`: port_base=<port>, slots=<n>,
 #                                   snapshots=<n>, the Volume Snapshots to keep (3 if unset),
@@ -111,8 +127,9 @@
 #
 # Exit codes: 0 done, 1 failed, 2 refused or bad usage (nothing changed), 75 skipped.
 #
-# Settings, for the tests only: DEADLIFT_STATE_DIR moves the Server's state. sudo's env_reset
-# never passes it on, so on a Server it's always the default.
+# Settings, for the tests only: DEADLIFT_STATE_DIR moves the Server's state, and
+# DEADLIFT_DISK_USED, a whole percentage, replaces measuring how full the disk is. sudo's env_reset
+# and systemd never pass them on, so on a Server they're always unset.
 set -euo pipefail
 umask 077
 
@@ -129,6 +146,8 @@ declare -A images=()
 keep_given='' keep=()
 # What a Sweep destroyed, and what it couldn't.
 swept=() unswept=()
+# Set once a deploy holds the Server's lock: its App's images are to be pruned (prune_once).
+prune_pending=''
 
 usage() {
   echo "deadlift: $1" >&2
@@ -137,16 +156,19 @@ usage() {
 }
 
 refuse() {
+  prune_once
   echo "deadlift: $1" >&2
   exit 2
 }
 
 fail() {
+  prune_once
   echo "deadlift: $1" >&2
   exit 1
 }
 
 skip() {
+  prune_once
   echo "deadlift: $1" >&2
   exit 75
 }
@@ -171,6 +193,39 @@ take_lock() {
     echo "Waiting for another operation on this Server to finish"
     flock 9
   fi
+}
+
+# Reads the Server-wide settings into feature_deploy_disk_limit and watchdog_disk_limit. One
+# missing, or the whole file, takes its default, as bootstrap would set it.
+read_settings() {
+  local file=$state/settings key value
+  feature_deploy_disk_limit=80 watchdog_disk_limit=90
+  if [[ -f $file ]]; then
+    while IFS='=' read -r key value; do
+      case $key in
+        feature_deploy_disk_limit) feature_deploy_disk_limit=$value ;;
+        watchdog_disk_limit) watchdog_disk_limit=$value ;;
+      esac
+    done <"$file"
+  fi
+  [[ $feature_deploy_disk_limit =~ ^(100|[1-9]?[0-9])$ && $watchdog_disk_limit =~ ^(100|[1-9]?[0-9])$ ]] ||
+    fail "the Server-wide settings in $file are broken: each disk limit must be a whole percentage, 0 to 100. Fix the file, so nothing was changed"
+}
+
+# Prints how full the disk is, as a whole percentage: the fuller of the filesystems holding the
+# Server's state and Docker's data. DEADLIFT_DISK_USED replaces the measure, for the tests.
+disk_used() {
+  local paths=("$state") root used
+  if [[ -n ${DEADLIFT_DISK_USED:-} ]]; then
+    echo "$DEADLIFT_DISK_USED"
+    return
+  fi
+  root=$(docker info --format '{{.DockerRootDir}}' 2>/dev/null) || true
+  if [[ -n $root && -d $root ]]; then paths+=("$root"); fi
+  # POSIX output: the fifth column is the percentage used.
+  used=$(df -P "${paths[@]}" | awk 'NR > 1 { sub(/%$/, "", $5); print $5 }' | sort -n | tail -n 1)
+  [[ $used =~ ^[0-9]+$ ]] || return 1
+  echo "$used"
 }
 
 # Reads the App's entry in the Server registry into port_base, slots and snapshots_kept.
@@ -322,11 +377,23 @@ claim_slot() {
   skip "all $slots of $app's Slots are held, by $(sentence "${holders[@]}"), so $env wasn't deployed. Destroy one of them to free its Slot"
 }
 
+# Skips the Feature deploy of $env when the disk is over the Server's lower threshold, so the
+# disk left goes to the Dev Environments.
+check_disk_for_feature() {
+  local used
+  read_settings
+  used=$(disk_used) || fail "couldn't measure how full the disk is, so $env wasn't deployed, and it was left as it was"
+  if ((used > feature_deploy_disk_limit)); then
+    skip "the disk is $used% full, over the Server's $feature_deploy_disk_limit% limit for Feature deploys, so $env wasn't deployed, and it was left as it was. Dev deploys still go ahead"
+  fi
+}
+
 deploy_feature() {
   local next=$delivery/next dir=$state/apps/$app/environments/$env url log
   local suffix slot port public
   [[ -f $delivery/compose.yaml ]] || refuse "the delivery has no compose.yaml to deploy"
   project=deadlift-$app-$env
+  check_disk_for_feature
 
   mkdir "$next"
   cp "$delivery/compose.yaml" "$next/compose.yaml"
@@ -362,6 +429,7 @@ deploy_feature() {
 
   output environment "$env"
   output url "$url"
+  prune_once
   echo "deadlift: deployed $env, which is up at $url${swept[*]:+, and swept $(sentence "${swept[@]}")}" >&2
 }
 
@@ -677,7 +745,94 @@ deploy_dev() {
 
   output environment dev
   output url "$url"
+  prune_once
   echo "deadlift: deployed dev, which is up at $url" >&2
+}
+
+# Prints the image references recorded under the directories $@: each Environment's versions
+# record theirs in vars.env, as DEADLIFT_IMAGE_<NAME>.
+recorded_images() {
+  local dir
+  for dir in "$@"; do
+    [[ -d $dir ]] || continue
+    find "$dir" -name vars.env -type f -exec sed -n 's/^DEADLIFT_IMAGE_[A-Z0-9_]*=//p' {} + || return 1
+  done
+}
+
+# Prints the repository of the image reference $1: without its digest or tag.
+repository_of() {
+  local ref=${1%%@*}
+  if [[ ${ref##*/} == *:* ]]; then ref=${ref%:*}; fi
+  echo "$ref"
+}
+
+# Removes the App's images that nothing needs any more. The App's images are those in the
+# repositories its Environments' versions, and this deploy, name. An image is needed while a
+# version of any App's Environment records it (Dev's current and previous, and each Feature
+# Environment's), while any container uses it, running or not, and always when it's the Volume
+# Snapshot helper. Errexit is off in here (see prune_once), so each step returns its own failure.
+prune_images() {
+  local -A needed=() repositories=()
+  local recorded ours containers used='' ref id repository listed name tag digest target
+  # Each listing is taken whole first: one that failed part way could make a needed image look
+  # unneeded.
+  recorded=$(recorded_images "$state/apps") || return 1
+  ours=$(recorded_images "$state/apps/$app/environments") || return 1
+  containers=$(docker container ls --all --quiet) || return 1
+  if [[ -n $containers ]]; then
+    # A container removed since it was listed fails the inspect, but uses no image any more, so
+    # the others' answers are enough. Docker also refuses to remove an image a container uses.
+    # shellcheck disable=SC2086 # One ID per word.
+    used=$(docker container inspect --format '{{.Image}}' $containers 2>/dev/null) || true
+  fi
+
+  while IFS= read -r ref; do
+    if [[ -z $ref ]]; then continue; fi
+    needed[$ref]=yes
+    # Not on the Server is fine: nothing to keep.
+    if id=$(docker image inspect --format '{{.Id}}' "$ref" 2>/dev/null); then needed[$id]=yes; fi
+  done <<<"$recorded"$'\n'"$snapshot_image"
+  while IFS= read -r id; do
+    if [[ -n $id ]]; then needed[$id]=yes; fi
+  done <<<"$used"
+  while IFS= read -r ref; do
+    if [[ -n $ref ]]; then repositories[$(repository_of "$ref")]=yes; fi
+  done < <(echo "$ours" && printf '%s\n' "${images[@]}")
+
+  for repository in "${!repositories[@]}"; do
+    listed=$(docker image ls --no-trunc --format '{{.Repository}} {{.Tag}} {{.Digest}} {{.ID}}' \
+      "$repository") || return 1
+    while read -r name tag digest id; do
+      if [[ -z $id || -n ${needed[$id]:-} || -n ${needed[$name:$tag]:-} ]]; then continue; fi
+      if [[ $tag != '<none>' ]]; then
+        target=$name:$tag
+      elif [[ $digest != '<none>' ]]; then
+        target=$name@$digest
+      else
+        continue
+      fi
+      docker image rm "$target" >/dev/null || return 1
+      echo "Removed the image $target, which no Environment uses"
+    done <<<"$listed"
+  done
+}
+
+# Prunes the App's images once a deploy holding the Server's lock has an outcome, whatever it is,
+# and before its reason is told, so the reason stays the last line. Only in the script itself,
+# never in a subshell. A failed prune is only a warning: the deploy's outcome stands.
+prune_once() {
+  [[ -n $prune_pending && $BASHPID == "$$" ]] || return 0
+  prune_pending=''
+  prune_images >&2 ||
+    echo "Warning: couldn't remove every image no Environment uses. The next deploy tries again" >&2
+}
+
+# The EXIT trap of a deploy holding the Server's lock, for a way out that didn't prune, such as
+# a refused template whose reason template.sh gave: prunes without a word, keeping the exit code.
+prune_quietly() {
+  local status=$?
+  prune_once >/dev/null 2>&1 || true
+  exit "$status"
 }
 
 # Promotes Dev's previous version, now running, to its current version, and forgets the one
@@ -810,6 +965,8 @@ op_deploy() {
   esac
   read_app
   take_lock
+  prune_pending=yes
+  trap prune_quietly EXIT
   if [[ $env == dev ]]; then deploy_dev; else deploy_feature; fi
 }
 
@@ -877,6 +1034,57 @@ op_sweep() {
     echo "deadlift: swept nothing: $app has no Feature Environments" >&2
   fi
 }
+
+# Stops the running containers of the Feature Environment $1 of the App $2, keeping everything
+# else, so it starts again on its next deploy.
+stop_feature() {
+  local env=$1 app=$2 ids
+  ids=$(docker container ls --quiet --filter "label=com.docker.compose.project=deadlift-$app-$env") ||
+    return 1
+  [[ -n $ids ]] || return 0
+  # shellcheck disable=SC2086 # One ID per word.
+  docker container stop $ids >/dev/null || return 1
+  echo "Stopped $app's $env"
+}
+
+# Stops every Feature Environment on the Server, of every App, when the disk is over the upper
+# threshold. Their data, state, Slots and Serve mappings stay, so each starts again on its next
+# deploy. Dev Environments are never touched. Goes on past one it can't stop, then fails, naming
+# them.
+op_watchdog() {
+  local used dir env app failed=()
+  (($# == 0)) || usage "unknown argument '$1' for watchdog"
+  take_lock
+  read_settings
+  used=$(disk_used) || fail "the watchdog couldn't measure how full the disk is, so nothing was stopped"
+  if ((used <= watchdog_disk_limit)); then
+    echo "deadlift: the disk is $used% full, at most the Server's $watchdog_disk_limit% limit, so nothing was stopped" >&2
+    return
+  fi
+  echo "The disk is $used% full, over $watchdog_disk_limit%: stopping every Feature Environment"
+  for dir in "$state"/apps/*/environments/feature-*/; do
+    [[ -d $dir ]] || continue
+    env=$(basename "$dir")
+    app=$(basename "$(dirname "$(dirname "$dir")")")
+    stop_feature "$env" "$app" || failed+=("$app's $env")
+  done
+  if ((${#failed[@]})); then
+    fail "the disk is $used% full, over the Server's $watchdog_disk_limit% limit, and the watchdog couldn't stop $(sentence "${failed[@]}") (above). The other Feature Environments are stopped, and every Dev Environment is still running"
+  fi
+  echo "deadlift: the disk is $used% full, over the Server's $watchdog_disk_limit% limit, so the watchdog stopped every Feature Environment on the Server. Each starts again on its next deploy, and every Dev Environment is still running" >&2
+}
+
+if [[ -n ${DEADLIFT_DISK_USED:-} && ! $DEADLIFT_DISK_USED =~ ^(100|[1-9]?[0-9])$ ]]; then
+  usage "DEADLIFT_DISK_USED is '$DEADLIFT_DISK_USED', and it must be a whole percentage, 0 to 100"
+fi
+
+# The watchdog acts on the whole Server, for its systemd timer, never for a delivery: the entry
+# command doesn't offer it.
+if [[ ${1:-} == watchdog ]]; then
+  shift
+  op_watchdog "$@"
+  exit 0
+fi
 
 app='' delivery=''
 while (($#)); do
