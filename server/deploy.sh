@@ -7,9 +7,10 @@
 #
 # Usage:
 #   deploy.sh --app <app> --delivery <dir> deploy dev|feature-<key> [--image <name>=<ref>]...
+#   deploy.sh --app <app> --delivery <dir> rollback dev [--discard-newer-data]
 #   deploy.sh --app <app> --delivery <dir> destroy feature-<key>
 #
-#   --app       The App, as the entry command worked it out. Never from a delivery's arguments.
+#   --app      The App, as the entry command worked it out. Never from a delivery's arguments.
 #   --delivery  The unpacked delivery: compose.yaml, the App's Compose template, and token, the
 #               job's registry token.
 #
@@ -27,6 +28,17 @@
 #       down, puts the snapshot back and starts the previous version, and the reason says whether
 #       that worked. The new version is recorded as current, and the one before it as previous,
 #       for Rollback.
+#
+#   rollback dev [--discard-newer-data]
+#       Takes the Dev Environment back to its previous version, which becomes its current
+#       version, and is then refused until Dev has been deployed again: one step only. Only Dev
+#       has versions, so a Feature Environment is refused. The previous version's images are
+#       pulled, if the Server no longer has them, before anything stops. Then Dev stops and the
+#       previous version starts on today's data, and is kept when it's healthy. When it isn't,
+#       the current version starts again and Rollback is refused, unless --discard-newer-data is
+#       given: then a Volume Snapshot of today's data is taken, the Volume Snapshot from before
+#       the current version was first deployed is put back, and the previous version starts on
+#       it. If it still doesn't start, today's data and the current version are put back.
 #
 #   destroy feature-<key>
 #       Removes the Feature Environment, its volumes and its Service mapping, and frees its

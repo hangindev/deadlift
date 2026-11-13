@@ -2,7 +2,7 @@
 // previous version is healthy on it, and discards it, keeping a Volume Snapshot of it first, only
 // when told to with --discard-newer-data.
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "vitest";
-import { exampleTemplate, get, putNote, startHarness } from "./harness.ts";
+import { docker, exampleTemplate, get, putNote, startHarness } from "./harness.ts";
 
 let harness: Awaited<ReturnType<typeof startHarness>>;
 beforeAll(async () => {
@@ -92,6 +92,19 @@ describe("rollback dev", () => {
     expect(taken).toHaveLength(1);
     expect(await server.fileInVolumeSnapshot(app, taken[0] ?? "", "note")).toBe("written on v2");
     expect(result.reason).toContain(taken[0]);
+  });
+
+  test("pulls the previous version's images when the Server no longer has them", async () => {
+    const server = await harness.server();
+    await deployDev(server, 1);
+    await putNote(server.devPort("a"), "written on v1");
+    await deployDev(server, 2);
+    await docker("image", "rm", "--force", await harness.image("healthy", 1));
+
+    const result = await rollback(server, "dev", "--discard-newer-data");
+
+    expect(result.outcome, result.output).toBe("done");
+    expect(await get(server.devPort("a"), "/version")).toBe("1");
   });
 
   test("goes back one step only", async () => {
