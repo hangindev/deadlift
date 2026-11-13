@@ -52,6 +52,63 @@ test("variables from the App's dev.env don't reach its Feature Environments", as
   expect(await get(server.slotPort("a", 1), "/env/GREETING")).toBe("");
 });
 
+test("one App's secrets never reach another App's Environments", async () => {
+  const server = await harness.server();
+  const [a, b] = [server.apps.a.name, server.apps.b.name];
+  await server.secrets(a, "feature", "GREETING=a's greeting\nA_ONLY=a's own secret\n");
+  await server.secrets(b, "feature", "GREETING=b's greeting\n");
+  const template = await templateWithEnvironment({ GREETING: "${GREETING}", A_ONLY: "${A_ONLY}" });
+
+  const result = await server.deliver(
+    b,
+    ["deploy", "feature-42", "--image", `web=${await harness.image()}`],
+    { template },
+  );
+
+  expect(result.outcome, result.output).toBe("done");
+  expect(await get(server.slotPort("b", 1), "/env/GREETING")).toBe("b's greeting");
+  expect(await get(server.slotPort("b", 1), "/env/A_ONLY")).toBe("");
+});
+
+test("a secrets file can't set deadlift's own variables", async () => {
+  const server = await harness.server();
+  const app = server.apps.a.name;
+  await server.secrets(app, "feature", "DEADLIFT_ENV=dev\nDEADLIFT_APP=someone-else\n");
+  const template = await templateWithEnvironment({
+    ENVIRONMENT: "${DEADLIFT_ENV}",
+    APP: "${DEADLIFT_APP}",
+  });
+
+  const result = await server.deliver(
+    app,
+    ["deploy", "feature-42", "--image", `web=${await harness.image()}`],
+    { template },
+  );
+
+  expect(result.outcome, result.output).toBe("done");
+  expect(await get(server.slotPort("a", 1), "/env/ENVIRONMENT")).toBe("feature-42");
+  expect(await get(server.slotPort("a", 1), "/env/APP")).toBe(app);
+});
+
+test("a deploy fails, changing nothing, when the App's secrets file isn't a valid env file", async () => {
+  const server = await harness.server();
+  const app = server.apps.a.name;
+  await server.secrets(app, "feature", "GREETING=hello\nnot a variable\n");
+
+  const result = await server.deliver(app, [
+    "deploy",
+    "feature-42",
+    "--image",
+    `web=${await harness.image()}`,
+  ]);
+
+  expect(result.code, result.output).toBe(1);
+  expect(result.outcome).toBe("failed");
+  expect(result.reason).toMatch(/^deadlift: .*feature\.env.*line 2/);
+  expect(result.reason).toMatch(/deadlift app secrets/);
+  expect(await server.containers(app)).toBe("");
+});
+
 test("DEADLIFT_ENV, DEADLIFT_APP and DEADLIFT_URL hold the Environment, the App and its URL", async () => {
   const server = await harness.server();
   const app = server.apps.a.name;
