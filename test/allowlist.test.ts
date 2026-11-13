@@ -17,13 +17,112 @@ async function inWeb(lines: string) {
   return template.replace(web, `${web}${lines}`);
 }
 
+/** The example template with one more service, `probe`, running the web image with `lines`. */
+async function withProbe(lines: string) {
+  return (await exampleTemplate()).replace(
+    "services:\n",
+    "services:\n  probe:\n    image: ${DEADLIFT_IMAGE_WEB}\n" + lines,
+  );
+}
+
 /** The example template with `text` added at its top level. */
 async function atTopLevel(text: string) {
   return `${await exampleTemplate()}\n${text}`;
 }
 
+/** The example template, with `web` also using `kind` (secrets or configs) `name`, defined at the
+ * top level as `definition`. */
+async function using(kind: "secrets" | "configs", definition: string) {
+  return atTopLevel(`${kind}:\n  shared:\n${definition}`).then((template) =>
+    template.replace(
+      "\n  web:\n    image: ${DEADLIFT_IMAGE_WEB}\n",
+      `\n  web:\n    image: \${DEADLIFT_IMAGE_WEB}\n    ${kind}: [shared]\n`,
+    ),
+  );
+}
+
 const refusals: Array<[string, () => Promise<string>, RegExp]> = [
+  // Host files, which Compose would read as root.
+  ["a bind mount", () => withProbe("    volumes:\n      - /etc:/host-etc:ro\n"), /volumes.*\/etc/],
+  ["env_file", () => inWeb("    env_file: /etc/environment\n"), /env_file/],
+  [
+    "env_file through a YAML merge key",
+    async () =>
+      `x-files: &files\n  env_file: /etc/environment\n${await exampleTemplate()}`.replace(
+        "\n  web:\n    image: ${DEADLIFT_IMAGE_WEB}\n",
+        "\n  web:\n    <<: *files\n    image: ${DEADLIFT_IMAGE_WEB}\n",
+      ),
+    /env_file/,
+  ],
+  ["include", () => atTopLevel("include:\n  - /etc/deadlift/other.yaml\n"), /include/],
+  [
+    "extends",
+    () => inWeb("    extends:\n      file: /etc/deadlift/other.yaml\n      service: web\n"),
+    /extends/,
+  ],
+  ["label_file", () => inWeb("    label_file: /etc/hostname\n"), /label_file/],
+  ["a secret read from a file", () => using("secrets", "    file: /etc/shadow\n"), /secrets\.shared\.file/],
+  ["a config read from a file", () => using("configs", "    file: /etc/passwd\n"), /configs\.shared\.file/],
+  [
+    "a named volume with driver_opts",
+    async () =>
+      (await exampleTemplate()).replace(
+        /^volumes:\n {2}data:\n/m,
+        "volumes:\n  data:\n    driver_opts: {type: none, o: bind, device: /etc}\n",
+      ),
+    /driver_opts/,
+  ],
+  // Privileges and the host's namespaces.
   ["a privileged container", () => inWeb("    privileged: true\n"), /privileged/],
+  ["added capabilities", () => inWeb("    cap_add: [SYS_ADMIN]\n"), /cap_add/],
+  ["devices", () => inWeb("    devices: [/dev/fuse:/dev/fuse]\n"), /devices/],
+  ["a loosened security_opt", () => inWeb("    security_opt: [seccomp=unconfined]\n"), /security_opt/],
+  ["the host's network", () => inWeb("    network_mode: host\n"), /network_mode/],
+  ["the host's PID namespace", () => inWeb("    pid: host\n"), /pid/],
+  ["the host's IPC namespace", () => inWeb("    ipc: host\n"), /ipc/],
+  ["the host's UTS namespace", () => inWeb("    uts: host\n"), /uts/],
+  ["the host's user namespace", () => inWeb("    userns_mode: host\n"), /userns_mode/],
+  // Networks, containers and volumes from outside the project.
+  [
+    "an external network",
+    async () =>
+      (await atTopLevel("networks:\n  shared:\n    external: true\n    name: bridge\n")).replace(
+        "\n  web:\n    image: ${DEADLIFT_IMAGE_WEB}\n",
+        "\n  web:\n    image: ${DEADLIFT_IMAGE_WEB}\n    networks: [shared]\n",
+      ),
+    /networks\.shared\.external/,
+  ],
+  ["another container's network", () => inWeb('    network_mode: "container:other"\n'), /container:/],
+  ["volumes_from another container", () => inWeb('    volumes_from: ["container:other"]\n'), /volumes_from/],
+  [
+    "a volume named for another project",
+    async () =>
+      (await exampleTemplate()).replace(
+        /^volumes:\n {2}data:\n/m,
+        "volumes:\n  data:\n    name: deadlift-other-dev_data\n",
+      ),
+    /volumes\.data\.name/,
+  ],
+  [
+    "an external volume",
+    async () =>
+      (await exampleTemplate()).replace(
+        /^volumes:\n {2}data:\n/m,
+        "volumes:\n  data:\n    external: true\n",
+      ),
+    /volumes\.data\.external/,
+  ],
+  // The Docker socket, in any form.
+  [
+    "the Docker socket",
+    () => withProbe("    volumes:\n      - /var/run/docker.sock:/var/run/docker.sock\n"),
+    /Docker socket/,
+  ],
+  ["use_api_socket", () => inWeb("    use_api_socket: true\n"), /use_api_socket/],
+  // Images only, and only deadlift publishes.
+  ["build", () => inWeb("    build: .\n"), /build/],
+  ["published ports", () => inWeb('    ports: ["8080:3000"]\n'), /ports/],
+  ["a container_name", () => inWeb("    container_name: web\n"), /container_name/],
 ];
 
 describe("a template ADR 0001 refuses", () => {
@@ -72,6 +171,3 @@ describe("a template ADR 0001 refuses", () => {
     },
   );
 });
-
-// Silences "unused" until the next tests use it.
-void atTopLevel;

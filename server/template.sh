@@ -8,8 +8,8 @@
 #   template.sh check <dir> <project>
 #   template.sh override <dir> <project> --port <port> --app <app> --environment <env> --limits <app.conf>
 #
-#   <dir>      Holds compose.yaml, the App's template, and vars.env, the variables it's
-#              deployed with.
+#   <dir>      Holds compose.yaml, the App's template, and the variables it's deployed with:
+#              vars.env, and secrets.env when the App has a secrets file. vars.env wins.
 #   <project>  The Environment's Compose project, deadlift-<app>-<environment>.
 #
 # check     Prints the template as `docker compose config` normalises it, when deadlift will
@@ -25,10 +25,13 @@
 #             - the labels deadlift.app and deadlift.environment on every service and volume.
 #
 # How a template is checked:
-#   1. Before Compose reads it, the YAML itself must not use include, extends, env_file or
-#      label_file: Compose would read those files from the Server as root while normalising.
+#   1. Before Compose reads it, the YAML itself must not use include, extends, env_file,
+#      label_file, or configs or secrets read from a file. Compose reads those files from the
+#      Server as root, some of them while normalising, and they could be another App's secrets
+#      files. (A bind mount can only be told once Compose has interpolated the template, and
+#      normalising doesn't read its source, so step 3 refuses it.)
 #   2. `docker compose config` normalises it, with nothing of this script's environment, or its
-#      caller's, visible: only vars.env.
+#      caller's, visible: only secrets.env and vars.env.
 #   3. Every key of the normalised model must be on the allowlist below. Keys not on it are
 #      refused, so a key Compose adds later is refused until it's judged.
 #
@@ -98,6 +101,14 @@ for document in documents:
     if "include" in document:
         print("include")
         sys.exit(0)
+    for kind in ("configs", "secrets"):
+        resources = document.get(kind)
+        if not isinstance(resources, dict):
+            continue
+        for name, resource in resources.items():
+            if isinstance(resource, dict) and "file" in resource:
+                print(f"{kind}.{name}.file")
+                sys.exit(0)
     services = document.get("services")
     if not isinstance(services, dict):
         continue
@@ -201,13 +212,15 @@ allowlist=$(
   # A top-level volume, network, config or secret: its own keys, and its name, which must be the
   # one Compose gives it in this project so it can never be another project's.
   def resource_problems($kind; $allowed; $project):
-    .key as $name | .value | to_entries[] | .key as $key | .value as $value
+    .key as $name
+    | if .value.external == true then
+        "\($kind).\($name).external is true: an external \($kind | rtrimstr("s")) is outside the App's project"
+      else .value | to_entries[] | .key as $key | .value as $value
     | "\($kind).\($name).\($key)" as $path
     | if $key == "name" then
         if $kind == "configs" or $kind == "secrets" or $value == "\($project)_\($name)" then empty
         else "\($path) is \($value): a \($kind | rtrimstr("s")) named outside the project could be another App's" end
-      elif $key == "external" then
-        if $value == true then "\($path) is true: an external \($kind | rtrimstr("s")) is outside the App's project" else empty end
+      elif $key == "external" then empty
       elif $key == "driver_opts" then
         "\($path) is set: driver options can mount the Server's files"
       elif $key == "file" then
@@ -220,7 +233,8 @@ allowlist=$(
           and ($value.driver // "default") == "default" then empty
         else "\($path) is set: the project's addresses are Docker's to choose" end
       elif ($allowed | any(. == $key)) then empty
-      else "\($path) is set: \($key | why)" end;
+      else "\($path) is set: \($key | why)" end
+      end;
 
   . as $config
   | [
@@ -239,8 +253,10 @@ JQ
 
 # Prints the checked template as `docker compose config` normalises it, or refuses it.
 check() {
-  local dir=$1 project=$2 key problem config route routed health
+  local dir=$1 project=$2 key problem config route routed health env_files=()
   [[ -f $dir/compose.yaml && -f $dir/vars.env ]] || usage "$dir needs compose.yaml and vars.env"
+  if [[ -f $dir/secrets.env ]]; then env_files+=(--env-file "$dir/secrets.env"); fi
+  env_files+=(--env-file "$dir/vars.env")
 
   if ! key=$(file_reading_key "$dir/compose.yaml" 2>"$dir/yaml.err"); then
     refuse "the template isn't valid YAML: $(tail -n 1 "$dir/yaml.err")"
@@ -250,7 +266,7 @@ check() {
 
   config=$(env -i PATH="$PATH" HOME="${HOME:-/root}" ${DOCKER_HOST:+"DOCKER_HOST=$DOCKER_HOST"} \
     docker compose --project-name "$project" --project-directory "$dir" \
-    --env-file "$dir/vars.env" --file "$dir/compose.yaml" \
+    "${env_files[@]}" --file "$dir/compose.yaml" \
     config --format json --no-env-resolution 2>"$dir/config.err") ||
     refuse "the template isn't valid Compose: $(tail -n 1 "$dir/config.err")"
 
