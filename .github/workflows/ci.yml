@@ -39,6 +39,42 @@ jobs:
       # as `deadlift init` writes them.
       - run: test/actionlint.sh
 
+  # Lints and type-checks deadlift's Python (ADR 0004), on the runner's system python3, which is
+  # Ubuntu 24.04's, as on a Server.
+  python-check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      UV_PYTHON: /usr/bin/python3
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: 0.11.26
+      - run: uv sync --locked
+      - run: uv run ruff check
+      - run: uv run ruff format --check
+      - run: uv run pyright
+
+  # deadlift's Python tests. While the scripts are ported, the TypeScript suite in the jobs below
+  # stays the oracle for what they do.
+  python-tests:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      UV_PYTHON: /usr/bin/python3
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: 0.11.26
+      - run: uv sync --locked
+      - run: uv run pytest
+
   # The delivery tests: deliveries end to end, through the deliver client script, the entry
   # command and the installed deploy script, against this runner's Docker.
   delivery-tests:
