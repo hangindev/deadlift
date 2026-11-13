@@ -7,7 +7,7 @@
 // and exits 1 on an HTTP error.
 import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
-import type { GitHubState, PackageVersion } from "./fake-github.ts";
+import type { CheckRun, GitHubState, PackageVersion } from "./fake-github.ts";
 
 class HttpError extends Error {
   readonly status: number;
@@ -39,10 +39,20 @@ function main(argv: string[]): number {
   let paginate = false;
   let jq: string | undefined;
   let path: string | undefined;
+  const fields: Record<string, unknown> = {};
   for (let i = 1; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === "--method" || arg === "-X") method = argv[++i].toUpperCase();
-    else if (arg === "--paginate") paginate = true;
+    else if (arg === "-f" || arg === "--raw-field" || arg === "-F" || arg === "--field") {
+      const field = argv[++i];
+      const name = field.slice(0, field.indexOf("="));
+      let value: unknown = field.slice(field.indexOf("=") + 1);
+      // As gh does: -F reads true, false and numbers as JSON; -f keeps every value a string.
+      if ((arg === "-F" || arg === "--field") && /^(true|false|-?\d+)$/.test(value as string)) {
+        value = JSON.parse(value as string);
+      }
+      setField(fields, name, value);
+    } else if (arg === "--paginate") paginate = true;
     else if (arg === "--jq" || arg === "-q") jq = argv[++i];
     else if (arg === "-H" || arg === "--header") i++;
     else if (arg.startsWith("-")) {
@@ -69,7 +79,7 @@ function main(argv: string[]): number {
   );
   try {
     if (failure) throw new HttpError(failure.status ?? 500, "Server Error");
-    const body = handle(method, route);
+    const body = handle(method, route, new URLSearchParams(query), fields);
     writeFileSync(statePath!, JSON.stringify(state, null, 2));
     if (body === undefined) return 0;
     const pages = Array.isArray(body) ? chunk(body, perPage) : [body];
@@ -85,8 +95,58 @@ function main(argv: string[]): number {
   }
 }
 
-function handle(method: string, route: string): unknown {
+function handle(
+  method: string,
+  route: string,
+  query: URLSearchParams,
+  fields: Record<string, unknown>,
+): unknown {
   let m: RegExpMatchArray | null;
+  if (method === "GET" && (m = route.match(/^repos\/([^/]+\/[^/]+)\/pulls$/))) {
+    const state = query.get("state") ?? "open";
+    return (repoOf(m[1]).pulls ?? []).filter((pr) => state === "all" || pr.state === state);
+  }
+  if (method === "GET" && (m = route.match(/^repos\/([^/]+\/[^/]+)\/pulls\/(\d+)$/))) {
+    const pr = (repoOf(m[1]).pulls ?? []).find((p) => p.number === Number(m![2]));
+    if (!pr) throw new HttpError(404, "Not Found");
+    return pr;
+  }
+  if ((m = route.match(/^repos\/([^/]+\/[^/]+)\/issues\/(\d+)\/comments$/))) {
+    const repo = repoOf(m[1]);
+    repo.comments ??= [];
+    const issue = Number(m[2]);
+    if (method === "GET") return repo.comments.filter((c) => c.issue === issue);
+    if (method === "POST") {
+      if (typeof fields.body !== "string") throw new HttpError(422, "body is required");
+      const comment = { id: 1000 + repo.comments.length, issue, body: fields.body };
+      repo.comments.push(comment);
+      return comment;
+    }
+  }
+  if (method === "PATCH" && (m = route.match(/^repos\/([^/]+\/[^/]+)\/issues\/comments\/(\d+)$/))) {
+    const comment = (repoOf(m[1]).comments ?? []).find((c) => c.id === Number(m![2]));
+    if (!comment) throw new HttpError(404, "Not Found");
+    if (typeof fields.body !== "string") throw new HttpError(422, "body is required");
+    comment.body = fields.body;
+    return comment;
+  }
+  if (method === "POST" && (m = route.match(/^repos\/([^/]+\/[^/]+)\/check-runs$/))) {
+    const repo = repoOf(m[1]);
+    if (typeof fields.name !== "string" || typeof fields.head_sha !== "string") {
+      throw new HttpError(422, "name and head_sha are required");
+    }
+    (repo.checkRuns ??= []).push(fields as unknown as CheckRun);
+    return fields;
+  }
+  // The branch's history, newest first, following first parents as `git log --first-parent`.
+  if (method === "GET" && (m = route.match(/^repos\/([^/]+\/[^/]+)\/commits$/))) {
+    const repo = repoOf(m[1]);
+    let sha: string | undefined = repo.branches[query.get("sha") ?? ""] ?? query.get("sha") ?? undefined;
+    if (!sha || !(sha in repo.commits)) throw new HttpError(404, "No commit found for SHA");
+    const history = [];
+    for (; sha; sha = repo.commits[sha]?.[0]) history.push({ sha });
+    return history;
+  }
   if (method === "GET" && (m = route.match(/^repos\/([^/]+\/[^/]+)$/))) {
     const repo = repoOf(m[1]);
     return { full_name: m[1], owner: { login: m[1].split("/")[0], type: repo.ownerType } };
@@ -157,6 +217,16 @@ function compare(commits: Record<string, string[]>, base: string, head: string) 
 function lookup<T>(map: Record<string, T> | undefined, name: string): T | undefined {
   const key = Object.keys(map ?? {}).find((k) => k.toLowerCase() === name.toLowerCase());
   return key === undefined ? undefined : map![key];
+}
+
+// gh's nested field names: output[title]=… sets {output: {title: …}}.
+function setField(fields: Record<string, unknown>, name: string, value: unknown) {
+  const [first, ...rest] = name.split("[").map((part) => part.replace(/\]$/, ""));
+  let target = fields;
+  for (const key of [first, ...rest].slice(0, -1)) {
+    target = (target[key] ??= {}) as Record<string, unknown>;
+  }
+  target[[first, ...rest].at(-1)!] = value;
 }
 
 function chunk<T>(items: T[], size: number): T[][] {

@@ -15,6 +15,29 @@ export interface PackageVersion {
   metadata: { package_type: "container"; container: { tags: string[] } };
 }
 
+export interface PullRequest {
+  number: number;
+  state: "open" | "closed";
+  head: { sha: string; repo: { full_name: string } };
+  labels: { name: string }[];
+}
+
+export interface IssueComment {
+  id: number;
+  /** The issue or pull request it's on. */
+  issue: number;
+  body: string;
+}
+
+export interface CheckRun {
+  name: string;
+  head_sha: string;
+  status: string;
+  conclusion?: string;
+  details_url?: string;
+  output?: { title?: string; summary?: string };
+}
+
 export interface GitHubState {
   repos?: Record<
     string,
@@ -22,8 +45,13 @@ export interface GitHubState {
       ownerType: "User" | "Organization";
       /** Branch name to the commit it points at. */
       branches: Record<string, string>;
-      /** Commit to its parents. */
+      /** Commit to its parents, the first parent first. */
       commits: Record<string, string[]>;
+      pulls?: PullRequest[];
+      /** Comments on its issues and pull requests. */
+      comments?: IssueComment[];
+      /** Check runs created on its commits, in order. */
+      checkRuns?: CheckRun[];
     }
   >;
   /** Owner login to its type, which decides whether its packages are under users/ or orgs/. */
@@ -59,6 +87,14 @@ export function fakeGitHub(initial: GitHubState) {
 
   return {
     state: (): GitHubState => JSON.parse(readFileSync(statePath, "utf8")),
+    /** Changes the state, as GitHub changes while a run waits. */
+    update(change: (state: GitHubState) => void) {
+      const state: GitHubState = JSON.parse(readFileSync(statePath, "utf8"));
+      change(state);
+      writeFileSync(statePath, JSON.stringify(state, null, 2));
+    },
+    /** The environment a job needs to reach this fake through `gh`. */
+    env: { PATH: `${dir}:${process.env.PATH}`, HOME: dir, FAKE_GITHUB_STATE: statePath },
     /** Runs a script from the repo, with this fake's `gh` first on PATH. */
     run(script: string, args: string[], env: Record<string, string> = {}): Run {
       const outputFile = join(dir, "github-output");
