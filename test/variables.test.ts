@@ -73,3 +73,53 @@ test("DEADLIFT_ENV, DEADLIFT_APP and DEADLIFT_URL hold the Environment, the App 
   expect(await get(port, "/env/APP")).toBe(app);
   expect(await get(port, "/env/URL")).toBe(`https://${app}.tailtest.ts.net:10001/`);
 });
+
+test("DEADLIFT_SECRET is random per Environment, and the same across redeploys", async () => {
+  const server = await harness.server();
+  const app = server.apps.a.name;
+  const template = await templateWithEnvironment({ SECRET: "${DEADLIFT_SECRET}" });
+  const deploy = async (key: string) => {
+    const result = await server.deliver(
+      app,
+      ["deploy", `feature-${key}`, "--image", `web=${await harness.image()}`],
+      { template },
+    );
+    expect(result.outcome, result.output).toBe("done");
+  };
+
+  await deploy("42");
+  await deploy("43");
+  const first = await get(server.slotPort("a", 1), "/env/SECRET");
+  const second = await get(server.slotPort("a", 2), "/env/SECRET");
+  await deploy("42");
+  const redeployed = await get(server.slotPort("a", 1), "/env/SECRET");
+
+  expect(first).toMatch(/^[0-9a-f]{64}$/);
+  expect(second).toMatch(/^[0-9a-f]{64}$/);
+  expect(second).not.toBe(first);
+  expect(redeployed).toBe(first);
+});
+
+// Skipped until the destroy operation lands (#6): then un-skip it.
+test.skip("DEADLIFT_SECRET is new after the Environment is destroyed and deployed again", async () => {
+  const server = await harness.server();
+  const app = server.apps.a.name;
+  const template = await templateWithEnvironment({ SECRET: "${DEADLIFT_SECRET}" });
+  const deploy = async () => {
+    const result = await server.deliver(
+      app,
+      ["deploy", "feature-42", "--image", `web=${await harness.image()}`],
+      { template },
+    );
+    expect(result.outcome, result.output).toBe("done");
+    return get(server.slotPort("a", 1), "/env/SECRET");
+  };
+
+  const before = await deploy();
+  const destroyed = await server.deliver(app, ["destroy", "feature-42"]);
+  expect(destroyed.outcome, destroyed.output).toBe("done");
+  const after = await deploy();
+
+  expect(after).toMatch(/^[0-9a-f]{64}$/);
+  expect(after).not.toBe(before);
+});

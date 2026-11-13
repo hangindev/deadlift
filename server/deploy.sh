@@ -130,14 +130,23 @@ compose() {
 
 # Writes the variables the template in $1 will see, for the Environment $env of $app at the URL
 # $2: secrets.env, a copy of the App's secrets file for that kind of Environment (dev.env or
-# feature.env), and vars.env, deadlift's own variables, which win over the secrets file's.
+# feature.env), and vars.env, deadlift's own variables, which win over the secrets file's. Also
+# writes secret, the Environment's DEADLIFT_SECRET: the one it already has, or a new random one on
+# its first deploy, so it's kept until the Environment is destroyed.
 write_variables() {
   local dir=$1 url=$2 secrets=$state/apps/$app/${env%%-*}.env name
+  local secret=$state/apps/$app/environments/$env/secret
   if [[ -f $secrets ]]; then cp "$secrets" "$dir/secrets.env"; else : >"$dir/secrets.env"; fi
+  if [[ -s $secret ]]; then
+    cp "$secret" "$dir/secret"
+  else
+    od -An -N32 -tx1 /dev/urandom | tr -d ' \n' >"$dir/secret"
+  fi
   {
     echo "DEADLIFT_ENV=$env"
     echo "DEADLIFT_APP=$app"
     echo "DEADLIFT_URL=$url"
+    echo "DEADLIFT_SECRET=$(<"$dir/secret")"
     for name in "${!images[@]}"; do
       echo "DEADLIFT_IMAGE_${name^^}=${images[$name]}"
     done
@@ -232,7 +241,8 @@ deploy_feature() {
   pull_images
 
   mkdir -p "$dir"
-  cp "$next/compose.yaml" "$next/secrets.env" "$next/vars.env" "$next/override.json" "$dir/"
+  cp "$next/compose.yaml" "$next/secrets.env" "$next/vars.env" "$next/secret" "$next/override.json" \
+    "$dir/"
   echo "$slot" >"$dir/slot"
   log=$delivery/up.log
   echo "Starting $env"
