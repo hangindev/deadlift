@@ -35,8 +35,8 @@ Write it as an **inverted pyramid**: the most important thing first, detail afte
 
 **Description** is the unheaded opening: one or two sentences, what changes and why. Add one visual only when two sentences can't show the shape of the change (a new flow, a file layout, a decision's diagram). Pick it from [`VISUALS.md`](VISUALS.md).
 
-**Steps to Test** is the heart of the PR: what the reviewer does to verify it. Number the steps, each one `action → expected result`, with commands they can paste. Cover each case the PR affects. For a docs-only PR, each step names what to read and what to check for in it.
+**Steps to Test** is the heart of the PR: what the reviewer does to verify it. Number the steps, each one `action → expected result`, with commands they can paste. Cover each case the PR affects. A docs-only PR has nothing to run: leave the section out, and let the opening sentences say what to read.
 
 **Supporting Resources** links what the reviewer may want beside the diff: ADRs, specs, docs, upstream issues. Delete the section when there's nothing to link.
 
-The PR is ready when its first sentence says what it does and every case it affects has a step to test it.
+The PR is ready when its first sentence says what it does and, unless it changes only docs, every case it affects has a step to test it.
