@@ -8,6 +8,7 @@
 # Usage:
 #   deploy.sh --app <app> --delivery <dir> deploy dev|feature-<key> [--image <name>=<ref>]...
 #   deploy.sh --app <app> --delivery <dir> destroy feature-<key>
+#   deploy.sh watchdog
 #
 #   --app       The App, as the entry command worked it out. Never from a delivery's arguments.
 #   --delivery  The unpacked delivery: compose.yaml, the App's Compose template, and token, the
@@ -19,7 +20,8 @@
 #       as ${DEADLIFT_IMAGE_<NAME>}. A Feature Environment, feature-<key>, takes a free Slot of
 #       the App's, or the one its key already holds, and is skipped when none is free. A
 #       redeploy keeps the Environment's Slot, URL and volumes, and a failed one leaves it
-#       stopped.
+#       stopped. A Feature deploy is skipped when the disk is over the Server's lower threshold,
+#       so what's left goes to the Dev Environments.
 #
 #       The Dev Environment, dev, is checked and pulled before anything stops, so a bad template
 #       or image reference leaves it running as it was. Then Dev stops, a Volume Snapshot is taken
@@ -31,6 +33,16 @@
 #   destroy feature-<key>
 #       Removes the Feature Environment, its volumes and its Service mapping, and frees its
 #       Slot. Done, changing nothing, when the App has no such Environment.
+#
+#   watchdog
+#       Run by the Server's systemd timer, which bootstrap installs, and never by a delivery: it
+#       acts on every App. When the disk is over the Server's upper threshold, it stops every
+#       Feature Environment on the Server, keeping their data, state, Slots and Serve mappings,
+#       so each starts again on its next deploy. Dev Environments are never touched.
+#
+# Disk thresholds are the Server-wide settings, in /srv/deadlift/settings (see bootstrap.sh):
+# feature_deploy_disk_limit (80) and watchdog_disk_limit (90), each a percentage of the disk
+# used, measured on the fuller of the filesystems holding the Server's state and Docker's data.
 #
 # A Feature Environment's key is up to 30 of a-z, 0-9 and -, starting with a letter or digit.
 #
@@ -61,6 +73,7 @@
 #
 # State, all root-only, under /srv/deadlift:
 #   lock                            The Server's lock: one operation at a time.
+#   settings                        The Server-wide settings, `name=value` lines, by bootstrap.
 #   apps/<app>/app.conf             The App's entry in the Server registry, written by
 #                                   `deadlift app add`: port_base=<port>, slots=<n>,
 #                                   snapshots=<n>, the Volume Snapshots to keep (3 if unset),
@@ -88,8 +101,9 @@
 #
 # Exit codes: 0 done, 1 failed, 2 refused or bad usage (nothing changed), 75 skipped.
 #
-# Settings, for the tests only: DEADLIFT_STATE_DIR moves the Server's state. sudo's env_reset
-# never passes it on, so on a Server it's always the default.
+# Settings, for the tests only: DEADLIFT_STATE_DIR moves the Server's state, and
+# DEADLIFT_DISK_USED, a whole percentage, replaces measuring how full the disk is. sudo's env_reset
+# and systemd never pass them on, so on a Server they're always unset.
 set -euo pipefail
 umask 077
 
@@ -660,8 +674,55 @@ op_destroy() {
   destroy_feature "$env"
 }
 
+# Stops the running containers of the Feature Environment $1 of the App $2, keeping everything
+# else, so it starts again on its next deploy.
+stop_feature() {
+  local env=$1 app=$2 ids
+  ids=$(docker container ls --quiet --filter "label=com.docker.compose.project=deadlift-$app-$env") ||
+    return 1
+  [[ -n $ids ]] || return 0
+  # shellcheck disable=SC2086 # One ID per word.
+  docker container stop $ids >/dev/null || return 1
+  echo "Stopped $app's $env"
+}
+
+# Stops every Feature Environment on the Server, of every App, when the disk is over the upper
+# threshold. Their data, state, Slots and Serve mappings stay, so each starts again on its next
+# deploy. Dev Environments are never touched. Goes on past one it can't stop, then fails, naming
+# them.
+op_watchdog() {
+  local used dir env app failed=()
+  (($# == 0)) || usage "unknown argument '$1' for watchdog"
+  take_lock
+  read_settings
+  used=$(disk_used) || fail "the watchdog couldn't measure how full the disk is, so nothing was stopped"
+  if ((used <= watchdog_disk_limit)); then
+    echo "deadlift: the disk is $used% full, at most the Server's $watchdog_disk_limit% limit, so nothing was stopped" >&2
+    return
+  fi
+  echo "The disk is $used% full, over $watchdog_disk_limit%: stopping every Feature Environment"
+  for dir in "$state"/apps/*/environments/feature-*/; do
+    [[ -d $dir ]] || continue
+    env=$(basename "$dir")
+    app=$(basename "$(dirname "$(dirname "$dir")")")
+    stop_feature "$env" "$app" || failed+=("$app's $env")
+  done
+  if ((${#failed[@]})); then
+    fail "the disk is $used% full, over the Server's $watchdog_disk_limit% limit, and the watchdog couldn't stop $(sentence "${failed[@]}") (above). The other Feature Environments are stopped, and every Dev Environment is still running"
+  fi
+  echo "deadlift: the disk is $used% full, over the Server's $watchdog_disk_limit% limit, so the watchdog stopped every Feature Environment on the Server. Each starts again on its next deploy, and every Dev Environment is still running" >&2
+}
+
 if [[ -n ${DEADLIFT_DISK_USED:-} && ! $DEADLIFT_DISK_USED =~ ^(100|[1-9]?[0-9])$ ]]; then
   usage "DEADLIFT_DISK_USED is '$DEADLIFT_DISK_USED', and it must be a whole percentage, 0 to 100"
+fi
+
+# The watchdog acts on the whole Server, for its systemd timer, never for a delivery: the entry
+# command doesn't offer it.
+if [[ ${1:-} == watchdog ]]; then
+  shift
+  op_watchdog "$@"
+  exit 0
 fi
 
 app='' delivery=''
