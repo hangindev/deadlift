@@ -95,9 +95,9 @@ on_server() {
   return "$status"
 }
 
-# A Tailscale API call: <method> <path under the tailnet> [<JSON body>]. Prints the response
-# body and sets api_status to the HTTP status.
-api_status=''
+# A Tailscale API call: <method> <path under the tailnet> [<JSON body>]. Sets api_status to the
+# HTTP status (000 when the API couldn't be reached) and api_body to the response's body.
+api_status='' api_body=''
 tailscale_api() {
   local method=$1 path=$2 body=${3:-} out
   out=$(mktemp)
@@ -106,7 +106,7 @@ tailscale_api() {
   if [[ -n $body ]]; then args+=(--header 'Content-Type: application/json' --data "$body"); fi
   api_status=$(curl "${args[@]}" "$tailscale_api/api/v2/tailnet/${TAILSCALE_TAILNET:--}/$path") ||
     api_status=000
-  cat "$out"
+  api_body=$(cat "$out")
   rm -f "$out"
 }
 
@@ -119,22 +119,22 @@ require_api_key() {
 # Creates the App's Service, or brings its ports and tags up to date. Leaves it alone when it's
 # right already.
 ensure_service() {
-  local app=$1 slots=$2 service=svc:$1 current wanted s
+  local app=$1 slots=$2 service=svc:$1 wanted s
   local ports=('"tcp:443"')
   for ((s = 1; s <= slots; s++)); do ports+=("\"tcp:$((10000 + s))\""); done
   wanted=$(jq -n --arg name "$service" --arg app "$app" --argjson ports "[$(IFS=, && echo "${ports[*]}")]" \
     '{name: $name, comment: "deadlift: the App \($app)", ports: $ports, tags: ["tag:deadlift-svc"]}')
-  current=$(tailscale_api GET "vip-services/$service")
+  tailscale_api GET "vip-services/$service"
   if [[ $api_status == 200 ]] && jq -e --argjson wanted "$wanted" \
-    '(.ports | sort) == ($wanted.ports | sort) and (.tags | sort) == $wanted.tags' <<<"$current" >/dev/null 2>&1; then
+    '(.ports | sort) == ($wanted.ports | sort) and (.tags | sort) == $wanted.tags' <<<"$api_body" >/dev/null 2>&1; then
     echo "deadlift: the Tailscale Service $service is there already, listing 443 and the ports of $app's $slots Slots."
     return
   fi
   [[ $api_status == 200 || $api_status == 404 ]] ||
-    fail "couldn't read the Tailscale Service $service from the Tailscale API (HTTP $api_status: $current). $app's place on the Server is ready; run \`deadlift app add\` again to create its Service"
-  current=$(tailscale_api PUT "vip-services/$service" "$wanted")
+    fail "couldn't read the Tailscale Service $service from the Tailscale API (HTTP $api_status: $api_body). $app's place on the Server is ready; run \`deadlift app add\` again to create its Service"
+  tailscale_api PUT "vip-services/$service" "$wanted"
   [[ $api_status == 200 ]] ||
-    fail "couldn't create the Tailscale Service $service through the Tailscale API (HTTP $api_status: $current). $app's place on the Server is ready; run \`deadlift app add\` again to create its Service"
+    fail "couldn't create the Tailscale Service $service through the Tailscale API (HTTP $api_status: $api_body). $app's place on the Server is ready; run \`deadlift app add\` again to create its Service"
   echo "deadlift: created the Tailscale Service $service, tagged tag:deadlift-svc, listing 443 and the ports of $app's $slots Slots."
 }
 
@@ -260,7 +260,7 @@ app_secrets() {
 }
 
 app_remove() {
-  local app server positional options response
+  local app server positional options
   parse_app_args "$@"
   ((${#positional[@]} == 0)) || usage "unknown argument '${positional[0]}' for app remove"
   [[ ${options[*]-} == --yes ]] ||
@@ -269,11 +269,11 @@ app_remove() {
 
   echo "Removing $app from $server"
   on_server "$server" remove "$app" </dev/null
-  response=$(tailscale_api DELETE "vip-services/svc:$app")
+  tailscale_api DELETE "vip-services/svc:$app"
   case $api_status in
     200 | 204) echo "deadlift: deleted the Tailscale Service svc:$app." >&2 ;;
     404) echo "deadlift: there's no Tailscale Service svc:$app, so there was none to delete." >&2 ;;
-    *) fail "$app is off $server, but its Tailscale Service svc:$app couldn't be deleted (HTTP $api_status: $response). Run \`deadlift app remove\` again" ;;
+    *) fail "$app is off $server, but its Tailscale Service svc:$app couldn't be deleted (HTTP $api_status: $api_body). Run \`deadlift app remove\` again" ;;
   esac
 }
 

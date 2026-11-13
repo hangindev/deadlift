@@ -207,7 +207,8 @@ op_add() {
     mv -f "$rule.new" "$rule"
     what+=("installed $user's sudo rule for the entry command")
   fi
-  visudo --check --quiet >/dev/null || fail "visudo finds the Server's sudo rules broken after adding $user's. See \`visudo -c\`"
+  local check
+  check=$(visudo --check 2>&1) || fail "visudo finds the Server's sudo rules broken after adding $user's: $(tr '\n' ' ' <<<"$check")"
 
   # The App's entry in the Server registry.
   install -d -m 0700 -o root -g root "$dir"
