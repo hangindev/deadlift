@@ -112,7 +112,7 @@ if [[ -n ${GITHUB_STEP_SUMMARY:-} ]]; then
   {
     echo "### deadlift build: pushed ${#pushed[@]} image$( ((${#pushed[@]} == 1)) || echo s)"
     echo
-    printf -- '- `%s`\n' "${pushed[@]#*=}"
+    printf -- "- \`%s\`\n" "${pushed[@]#*=}"
   } >>"$GITHUB_STEP_SUMMARY"
 fi
 echo "deadlift: pushed ${pushed[*]#*=}" >&2

@@ -30,6 +30,7 @@ call=$state/ssh/$((n + 1))
 mkdir -p "$call/delivery"
 printf '%s\n' "$destination" >"$call/destination"
 # The remote shell splits the command line into words, undoing the client's quoting.
+words=()
 eval "words=($*)"
 jq -n '$ARGS.positional' --args -- "${words[@]}" >"$call/args"
 tar -xf - -C "$call/delivery"
