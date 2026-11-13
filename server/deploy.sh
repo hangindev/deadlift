@@ -346,18 +346,22 @@ pull_snapshot_image() {
 # each volume's contents as <volume>.tar, in a directory of its own under $snapshots. Sets
 # snapshot to its name. One that couldn't be finished is removed, so it never counts.
 take_snapshot() {
-  local volume partial n=1
+  local volume volumes partial n=1
+  # Listed first: a snapshot missing a volume because Docker didn't answer would make Recovery
+  # remove that volume.
+  volumes=$(project_volumes) || return 1
   snapshot=$(date -u +%Y%m%dT%H%M%SZ)
   while [[ -e $snapshots/$snapshot ]]; do snapshot=$(date -u +%Y%m%dT%H%M%SZ)-$((++n)); done
   partial=$snapshots/$snapshot.partial
   mkdir -p "$partial"
   while IFS= read -r volume; do
+    [[ -n $volume ]] || continue
     if ! docker run --rm --network none --volume "$volume:/volume:ro" "$snapshot_image" \
       tar -cf - -C /volume . >"$partial/$volume.tar"; then
       rm -rf "$partial"
       return 1
     fi
-  done < <(project_volumes)
+  done <<<"$volumes"
   mv "$partial" "$snapshots/$snapshot"
 }
 
@@ -365,11 +369,13 @@ take_snapshot() {
 # removed. Each volume it holds gets exactly its contents back, and a volume made since, which it
 # doesn't hold, is removed.
 restore_snapshot() {
-  local from=$snapshots/$1 volume file
+  local from=$snapshots/$1 volume volumes file
   [[ -n $1 && -d $from ]] || return 1
+  volumes=$(project_volumes) || return 1
   while IFS= read -r volume; do
-    if [[ ! -f $from/$volume.tar ]]; then docker volume rm "$volume" >/dev/null || return 1; fi
-  done < <(project_volumes)
+    [[ -n $volume && ! -f $from/$volume.tar ]] || continue
+    docker volume rm "$volume" >/dev/null || return 1
+  done <<<"$volumes"
   for file in "$from"/*.tar; do
     [[ -f $file ]] || continue
     volume=$(basename "$file" .tar)
