@@ -15,6 +15,7 @@ import {
   mkdir,
   mkdtemp,
   readFile,
+  readdir,
   rm,
   symlink,
   writeFile,
@@ -211,7 +212,7 @@ export async function startHarness() {
   }
 
   /** A fresh Server holding two Apps, `a` and `b`, with no Environments yet. */
-  async function server(options: { slots?: number } = {}) {
+  async function server(options: { slots?: number; snapshots?: number } = {}) {
     const n = ++serverCount;
     const dir = join(root, `server-${n}`);
     const state = join(dir, "srv");
@@ -252,7 +253,8 @@ export async function startHarness() {
       await mkdir(join(state, "apps", app.name), { recursive: true });
       await writeFile(
         join(state, "apps", app.name, "app.conf"),
-        `port_base=${app.portBase}\nslots=${options.slots ?? 3}\n`,
+        `port_base=${app.portBase}\nslots=${options.slots ?? 3}\n` +
+          (options.snapshots ? `snapshots=${options.snapshots}\n` : ""),
       );
     }
 
@@ -368,8 +370,22 @@ export async function startHarness() {
       return docker("ps", "--format", "{{.Names}}", "--filter", `name=^deadlift-${app}-`);
     }
 
+    /** When a container of one App's Environment last started, to tell whether it was touched. */
+    function startedAt(app: string, environment: string, service: string) {
+      return docker("inspect", "--format", "{{.State.StartedAt}}", `deadlift-${app}-${environment}-${service}-1`);
+    }
+
+    /** The Volume Snapshots the Server keeps of one App's Dev Environment, as an operator listing
+     * the Server's state would see them. Nothing else shows them yet. */
+    async function volumeSnapshots(app: string): Promise<string[]> {
+      const dir = join(state, "apps", app, "environments/dev/snapshots");
+      return (await readdir(dir).catch(() => [])).sort();
+    }
+
     return {
       apps,
+      startedAt,
+      volumeSnapshots,
       /** Where the Dev Environment of `app` listens on the host's loopback: the App's base. */
       devPort: (app: "a" | "b") => apps[app].portBase,
       /** Where Slot `slot` of `app` listens on the host's loopback: the App's base + 10 × slot. */
@@ -431,6 +447,12 @@ export async function tarOf(members: Record<string, Member>): Promise<Buffer> {
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
+}
+
+/** Writes a note through the example App on the host's loopback, into its named volume. */
+export async function putNote(port: number, note: string): Promise<void> {
+  const response = await fetch(`http://127.0.0.1:${port}/note`, { method: "PUT", body: note });
+  if (!response.ok) throw new Error(`PUT /note answered ${response.status}`);
 }
 
 /** Fetches a path from an Environment on the host's loopback. */
