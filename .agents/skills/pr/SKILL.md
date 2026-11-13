@@ -14,7 +14,7 @@ Write the PR body to this template. Use the domain language from `GLOSSARY.md`.
 ```markdown
 **Issue:** #<n>
 
-<One or two sentences: what changes, and why.>
+<A few sentences: what changes, and why.>
 
 <optional: one visual>
 
@@ -33,7 +33,7 @@ Write it as an **inverted pyramid**: the most important thing first, detail afte
 
 **Issue** links the issue the PR resolves or belongs to. When there is none, the line goes.
 
-**Description** is the unheaded opening: one or two sentences, what changes and why. Add one visual only when two sentences can't show the shape of the change (a new flow, a file layout, a decision's diagram). Pick it from [`VISUALS.md`](VISUALS.md).
+**Description** is the unheaded opening: a few sentences, what changes and why. Add one visual only when sentences can't show the shape of the change (a new flow, a file layout, a decision's diagram). Pick it from [`VISUALS.md`](VISUALS.md).
 
 **Steps to Test** is the heart of the PR: what the reviewer does to verify it. Number the steps, each one `action → expected result`, with commands they can paste. Cover each case the PR affects. A docs-only PR has nothing to run: leave the section out, and let the opening sentences say what to read.
 
