@@ -26,6 +26,9 @@
 #     command. jq, and python3 with PyYAML, which they use.
 #   - /srv/deadlift, only for root: the Server's lock, the Server registry (apps/) and the
 #     Server-wide settings (settings, below).
+#   - The watchdog's timer, deadlift-watchdog.timer, which runs `deploy.sh watchdog` every 5
+#     minutes (deadlift-watchdog.service): over the upper disk threshold, it stops every Feature
+#     Environment on the Server and leaves every Dev Environment running.
 #
 # The Server-wide settings, in /srv/deadlift/settings, one `name=value` a line. A setting missing
 # from the file is added with its default; one already set is never changed, so edit the file to
@@ -45,6 +48,7 @@ lib=/usr/local/lib/deadlift
 entry_command=/usr/local/sbin/deadlift-entry
 daemon_json=/etc/docker/daemon.json
 firewall_unit=/etc/systemd/system/deadlift-firewall.service
+watchdog_unit=/etc/systemd/system/deadlift-watchdog
 settings_defaults=(feature_deploy_disk_limit=80 watchdog_disk_limit=90)
 
 fail() {
@@ -245,6 +249,34 @@ setup_state() {
   done
 }
 
+# The watchdog, `deploy.sh watchdog`, run by a timer every 5 minutes: over the upper disk
+# threshold, it stops every Feature Environment on the Server.
+setup_watchdog() {
+  local units_changed=''
+  install_content 0644 "$watchdog_unit.service" "[Unit]
+Description=deadlift's disk watchdog: stops every Feature Environment when the disk is too full
+Wants=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=$lib/deploy.sh watchdog"
+  units_changed+=$changed
+  install_content 0644 "$watchdog_unit.timer" "[Unit]
+Description=Runs deadlift's disk watchdog every 5 minutes
+
+[Timer]
+OnCalendar=*:0/5
+
+[Install]
+WantedBy=timers.target"
+  units_changed+=$changed
+  # Only after a change, so running bootstrap again leaves systemd alone.
+  if [[ -n $units_changed ]]; then systemctl daemon-reload; fi
+  start_and_enable deadlift-watchdog.timer
+  echo "The watchdog runs every 5 minutes"
+}
+
 [[ $EUID -eq 0 ]] || refuse "bootstrap needs root"
 for file in entry.sh deploy.sh template.sh firewall.sh; do
   [[ -r $here/$file ]] || refuse "$file isn't beside bootstrap.sh. Run it through \`deadlift server bootstrap\`, which sends all of server/"
@@ -276,5 +308,7 @@ step "Starting Docker"
 start_docker
 step "Setting up $state and the Server-wide settings"
 setup_state
+step "Installing the watchdog's timer"
+setup_watchdog
 
 echo "deadlift: this machine is a Server, bootstrapped and up to date."

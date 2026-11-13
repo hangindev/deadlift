@@ -30,6 +30,9 @@
 #       that worked. The new version is recorded as current, and the one before it as previous,
 #       for Rollback.
 #
+#       After every deploy, whatever its outcome, the App's images that no Environment's version
+#       records, of any App, and no container uses are removed from the Server.
+#
 #   destroy feature-<key>
 #       Removes the Feature Environment, its volumes and its Service mapping, and frees its
 #       Slot. Done, changing nothing, when the App has no such Environment.

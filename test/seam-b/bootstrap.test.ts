@@ -103,6 +103,29 @@ describe("deadlift server bootstrap", () => {
     expect(settings).toMatch(/^watchdog_disk_limit=90$/m);
   });
 
+  test("runs the watchdog on a timer", async () => {
+    expect(await ok("systemctl", "is-enabled", "deadlift-watchdog.timer")).toBe("enabled");
+    expect(await ok("systemctl", "is-active", "deadlift-watchdog.timer")).toBe("active");
+
+    // What the timer starts, run now: it measures this machine's disk, and finds no Feature
+    // Environment to stop.
+    const since = await ok("date", "+%Y-%m-%d %H:%M:%S");
+    const result = await run("sudo", ["systemctl", "start", "deadlift-watchdog.service"]);
+
+    expect(result.code, result.output).toBe(0);
+    const log = await ok(
+      "sudo",
+      "journalctl",
+      "--unit",
+      "deadlift-watchdog.service",
+      "--since",
+      since,
+      "--output",
+      "cat",
+    );
+    expect(log).toMatch(/^deadlift: the disk is \d+% full/m);
+  });
+
   test("changes no file and restarts nothing when run again", async () => {
     // An Environment's container, running across the second run.
     const container = `${prefix}-running`;
