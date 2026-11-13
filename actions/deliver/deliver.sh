@@ -73,7 +73,8 @@ fi
 
 remote=$(printf '%q ' sudo --non-interactive /usr/local/sbin/deadlift-entry --protocol "$protocol" "$@")
 status=0
-tar -C "$work/delivery" -cf - "${members[@]}" |
+# Always a tar, even one holding nothing, as for an operation that needs no template or token.
+tar -C "$work/delivery" -cf - --files-from=/dev/null "${members[@]}" |
   ssh -o BatchMode=yes -o ConnectTimeout=30 -o StrictHostKeyChecking=accept-new \
     "deadlift-$app@$server" "$remote" 2>&1 | tee "$work/log" || status=${PIPESTATUS[1]}
 
@@ -83,7 +84,7 @@ output() {
 }
 reason=$(grep -E '^deadlift: ' "$work/log" | tail -n 1 || true)
 case $status in
-  0) outcome=done ;;
+  0) outcome="done" ;;
   75) outcome=skipped ;;
   255)
     outcome=failed

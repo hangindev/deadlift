@@ -53,6 +53,8 @@ umask 077
 state=${DEADLIFT_STATE_DIR:-/srv/deadlift}
 # How long the routed service has to report healthy.
 health_timeout=300
+# The --image arguments: each image's reference, by name.
+declare -A images=()
 
 usage() {
   echo "deadlift: $1" >&2
@@ -111,16 +113,17 @@ read_tailnet_suffix() {
   [[ -n $suffix ]] || fail "couldn't read the tailnet's name from Tailscale, so nothing was changed"
 }
 
-# Runs `docker compose` for the Environment whose files are in $1, as the project $project. The
-# template sees only the variables in vars.env: nothing from this script's own environment, or
-# its caller's, reaches it.
+# Runs `docker compose` for the Environment whose files are in $1, as the project $project: its
+# template, and deadlift's override once there is one. The template sees only the variables in
+# vars.env: nothing from this script's own environment, or its caller's, reaches it.
 compose() {
-  local dir=$1
+  local dir=$1 files
   shift
+  files=(--file "$dir/compose.yaml")
+  if [[ -f $dir/override.json ]]; then files+=(--file "$dir/override.json"); fi
   env -i PATH="$PATH" HOME="${HOME:-/root}" ${DOCKER_HOST:+"DOCKER_HOST=$DOCKER_HOST"} \
     docker compose --project-name "$project" --project-directory "$dir" \
-    --env-file "$dir/vars.env" --file "$dir/compose.yaml" \
-    ${override:+--file "$dir/override.json"} "$@"
+    --env-file "$dir/vars.env" "${files[@]}" "$@"
 }
 
 # Checks the template in $1 and sets routed and route_port from its x-deadlift.route, and config
@@ -128,7 +131,6 @@ compose() {
 # run.
 check_template() {
   local dir=$1 health
-  override=''
   config=$(compose "$dir" config --format json 2>"$dir/config.err") ||
     refuse "the template isn't valid Compose: $(tail -n 1 "$dir/config.err"). Nothing was changed"
   route=$(jq -r '."x-deadlift".route // empty' <<<"$config")
@@ -155,6 +157,8 @@ check_template() {
 pull_images() {
   local docker_config=$delivery/docker ref
   mkdir -p "$docker_config"
+  # In a config of its own, inside the delivery, so it's removed with it. GHCR checks only the
+  # token, so the username is a placeholder.
   if [[ -s $delivery/token ]]; then
     jq -n --arg auth "$(printf 'deadlift:%s' "$(<"$delivery/token")" | base64 -w0)" \
       '{auths: {"ghcr.io": {auth: $auth}}}' >"$docker_config/config.json"
@@ -213,7 +217,6 @@ deploy_feature() {
   mkdir -p "$dir"
   cp "$next/compose.yaml" "$next/vars.env" "$next/override.json" "$dir/"
   echo "$slot" >"$dir/slot"
-  override=yes
   log=$delivery/up.log
   echo "Starting $env"
   if ! compose "$dir" up --detach --pull never --remove-orphans 2>&1 | tee "$log" >&2 ||
@@ -235,7 +238,6 @@ deploy_feature() {
 op_deploy() {
   env=${1:-}
   shift || true
-  images=()
   while (($#)); do
     case $1 in
       --image)
@@ -274,7 +276,6 @@ while (($#)); do
 done
 [[ $app =~ ^[a-z0-9][a-z0-9-]*$ ]] || usage "--app needs an App"
 [[ -d $delivery ]] || usage "--delivery needs the unpacked delivery"
-declare -A images
 
 case ${1:-} in
   deploy) shift && op_deploy "$@" ;;
