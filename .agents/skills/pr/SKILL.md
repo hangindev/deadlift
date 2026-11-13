@@ -9,162 +9,34 @@ metadata:
     url: "https://github.com/humanlayer/skills/blob/main/plugins/show-me/skills/show-me/SKILL.md"
 ---
 
-Use this template for writing the PR body:
+Write the PR body to this template. Use the domain language from `GLOSSARY.md`.
 
 ```markdown
-## Summary
+**Issue:** #<n>
 
-<diagram, diff-sketch, or tree>
+<A few sentences: what changes, and why.>
 
-## Evidence
+<optional: one visual>
 
-- **Before:** <screenshot/output/failing test run>
-  **After:** <screenshot/output/passing test run>
+## Steps to Test
 
-## Merge Danger
+1. <action> → <expected result>
 
-**Door:** <one-way or two-way>
+## Supporting Resources
 
-<optional: description>
-
-**Blast Radius:** <one-word description>
-
-<optional: potential ramifications of merge>
+- <link>
 ```
 
 ## Sections
 
-Skip all preambles and keep prose brief. Use the user's domain language from `GLOSSARY.md`.
+Write it as an **inverted pyramid**: the most important thing first, detail after. A reviewer who stops after the first line knows what the PR does. Keep it brief: no preamble, no restating the diff.
 
-### Summary
+**Issue** links the issue the PR resolves or belongs to. When there is none, the line goes.
 
-Pick the smallest view that makes the key point clear.
+**Description** is the unheaded opening: a few sentences, what changes and why. Add one visual only when sentences can't show the shape of the change (a new flow, a file layout, a decision's diagram). Pick it from [`VISUALS.md`](VISUALS.md).
 
-- Show logic or an algorithm as pseudocode:
+**Steps to Test** is the heart of the PR: what the reviewer does to verify it. Number the steps, each one `action → expected result`, with commands they can paste. Cover each case the PR affects. A docs-only PR has nothing to run: leave the section out, and let the opening sentences say what to read.
 
-```text
-on(save)
-  if content is unchanged
-    return cached result
-  write new content
-  return fresh result
-```
+**Supporting Resources** links what the reviewer may want beside the diff: ADRs, specs, docs, upstream issues. Delete the section when there's nothing to link.
 
-- Show runtime control flow as a call tree:
-
-```text
-submitForm
-  createSession
-    persistPrompt
-    launchAgent
-  navigateToSession
-```
-
-- Show UI structure as a component tree, including state and module boundaries that matter:
-
-```text
-<SessionPage> (apps/example/src/routes/session.tsx)
-  useSessionEvents()
-  <SessionToolbar>
-    <RunSkillButton> (packages/ui)
-```
-
-- Show file responsibility or a broad refactor as a shallow file tree:
-
-```text
-src/
-├── commands/       # parses user actions
-├── sessions/       # owns session state
-└── transport/      # sends API requests
-```
-
-- Show component interaction, control flow, or data flow with Mermaid:
-
-```mermaid
-sequenceDiagram
-    participant User
-    participant UI
-    participant Daemon
-    User->>UI: choose command
-    UI->>Daemon: send expanded prompt
-    Daemon-->>UI: stream result
-```
-
-- Use `diff` when the point is what changes and the surrounding shape already exists. Match the diff shape to the topic.
-
-For a component change:
-
-```diff
- <SessionPage>
-   useSessionEvents()
-   <SessionToolbar>
-+    <RunSkillButton />
-   <SessionTimeline>
-+    <SkillResultCard />
-```
-
-For a file-layout change:
-
-```diff
- src/
- ├── commands/
-+│   └── show-me.ts       # expands the slash command
- ├── sessions/
--└── transport.ts
-+└── transport/
-+    ├── client.ts
-+    └── stream.ts
-```
-
-For a call-tree or call-stack change:
-
-```diff
- submitForm
-   createSession
-     persistPrompt
-+    expandSkillMention
-     launchAgent
--  navigateToSession
-+  navigateToSession
-+    subscribeToEvents
-```
-
-For a state or control-flow change:
-
-```diff
- on(save)
--  write content
-+  if content is unchanged
-+    return cached result
-+  write new content
-+  invalidate cache
-```
-
-- Show the whole block when most of it is new, when omitted context would hide ownership or order, or when the user needs a copyable target shape:
-
-```ts
-function expandSkill(command: string): string {
-  const skillName = command.slice(1);
-  return `use the ${skillName} skill`;
-}
-```
-
-#### Guidance
-
-Place each visual next to the short text it supports. Keep only the calls, files, props, states, and boundaries needed to answer the user's current question or the options to resolve the current discussion point.
-
-You may use one of these, you may use several, it is unlikely you will use all of them. Use your judgement and don't overwhelm the user.
-
-### Evidence
-
-Concrete evidence that the change works. Show a before and after.
-
-Screenshots are S-tier - when the environment is set up for it and the change is visual.
-
-Execution-based evidence is A-tier. Test results, console output. Show the exact test that now fails and passes, using pseudocode.
-
-### Merge Danger
-
-Describe whether it's a one-way or two-way door. You can walk back through two-way doors, but not one-way doors. A PR that is cheap to roll back is lower risk. Changes that involve destructive actions or hard-to-reverse decisions are one-way doors.
-
-The blast radius is the potential impact or scope of the changes introduced by this PR. Consider all possibilities. Examples are layout shift, breakages for consumers, mobile responsiveness, etc.
+The PR is ready when its first sentence says what it does and, unless it changes only docs, every case it affects has a step to test it.
