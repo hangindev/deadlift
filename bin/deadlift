@@ -8,6 +8,7 @@
 #   deadlift app add <app> --server <server> --repo <owner/name> [--slots <n>] [--snapshots <n>] [--memory <size>] [--cpus <n>] [--pids <n>]
 #   deadlift app secrets <app> dev|feature <file> --server <server>
 #   deadlift app remove <app> --server <server> --yes
+#   deadlift init <app> --server <server> [--branch <branch>] [--image <name>]...
 #
 #   server provision  A wizard that walks you through getting a new Server, step by step: the
 #                     tailnet policy, buying the machine, the provider's firewall, bootstrap,
@@ -42,6 +43,12 @@
 #   app remove        Removes the App from the Server: every Environment with its volumes, its
 #                     Volume Snapshots and secrets files, its deploy user and sudo rule, and its
 #                     Tailscale Service. Its data is gone for good, hence --yes.
+#   init              Writes the starter workflows into the App's repository, the one it's run
+#                     in: deadlift-feature, deadlift-dev, deadlift-sweep and deadlift-rollback,
+#                     delivering the App to <server>, with Dev tracking <branch> (main by
+#                     default) and building each --image (web by default). They're the
+#                     App's own from then on: running it again leaves any it has changed alone
+#                     (see cli/init.sh).
 #
 # app add and app remove reach the Tailscale API with the maintainer's own credential, an API
 # access token in TAILSCALE_API_KEY, for the tailnet in TAILSCALE_TAILNET (the token's own by
@@ -292,5 +299,6 @@ case "${1:-} ${2:-}" in
   "app add") shift 2 && app_add "$@" ;;
   "app secrets") shift 2 && app_secrets "$@" ;;
   "app remove") shift 2 && app_remove "$@" ;;
+  "init "*) shift && exec "$root/cli/init.sh" "$@" ;;
   *) usage "'${*}' isn't a command" ;;
 esac

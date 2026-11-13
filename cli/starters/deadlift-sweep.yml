@@ -1,0 +1,92 @@
+# The Sweep: destroys every Feature Environment whose pull request isn't open, such as one closed
+# while CI was down, or closed with conflicts, which gets no pull_request run. Then deletes the
+# App's image versions in GHCR that no open pull request or recent commit on @branch@ needs.
+# Every six hours, off the hour, and by hand.
+name: deadlift-sweep
+
+on:
+  schedule:
+    - cron: "23 */6 * * *"
+  workflow_dispatch:
+
+permissions: {}
+
+# Naming the shell turns on pipefail, so a failure in a pipeline fails the step.
+defaults:
+  run:
+    shell: bash
+
+concurrency:
+  group: deadlift-sweep
+  cancel-in-progress: false
+
+env:
+  DEADLIFT_APP: @app@
+  DEADLIFT_SERVER: @server@
+  # The branch deadlift-dev deploys. Its recent commits' images are kept for the Dev Environment.
+  DEADLIFT_BRANCH: @branch@
+
+jobs:
+  sweep:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      pull-requests: read
+      # deliver joins the tailnet with GitHub's OIDC token.
+      id-token: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+    steps:
+      # The open pull requests, whose Feature Environments are kept. Into a variable first, so that
+      # a failed listing fails here: an empty list would sweep every Feature Environment.
+      - id: open
+        run: |
+          open=$(gh api --paginate "repos/$REPO/pulls?state=open&per_page=100" \
+            --jq '.[] | select(.head.repo.full_name == env.REPO) | .number')
+          keep=$(paste -sd, - <<<"$open")
+          echo "keep=$keep" >>"$GITHUB_OUTPUT"
+          if [[ -n $keep ]]; then
+            echo "keep-none=false" >>"$GITHUB_OUTPUT"
+          else
+            echo "keep-none=true" >>"$GITHUB_OUTPUT"
+          fi
+      - uses: hangindev/deadlift/actions/deliver@v1
+        with:
+          app: ${{ env.DEADLIFT_APP }}
+          server: ${{ env.DEADLIFT_SERVER }}
+          operation: sweep
+          keep: ${{ steps.open.outputs.keep }}
+          keep-none: ${{ steps.open.outputs.keep-none }}
+          oauth-client-id: ${{ vars.TS_OAUTH_CLIENT_ID }}
+          audience: ${{ vars.TS_AUDIENCE }}
+
+  prune-registry:
+    needs: sweep
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      pull-requests: read
+      # Each package must also give this repository the Admin role (its settings, Manage
+      # Actions access).
+      packages: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+    steps:
+      # The versions to keep: each open pull request's head, and the last 10 commits on the
+      # tracked branch, which hold the Dev Environment's current and previous versions. Into
+      # variables first, so that a failed listing fails here.
+      - id: keep
+        run: |
+          heads=$(gh api --paginate "repos/$REPO/pulls?state=open&per_page=100" \
+            --jq '.[] | select(.head.repo.full_name == env.REPO) | .head.sha')
+          recent=$(gh api "repos/$REPO/commits?sha=$DEADLIFT_BRANCH&per_page=10" --jq '.[].sha')
+          keep=$(sed -n 's/^./sha-&/p' <<<"$heads
+          $recent" | sort -u | paste -sd, -)
+          echo "keep=$keep" >>"$GITHUB_OUTPUT"
+      - uses: hangindev/deadlift/actions/prune-registry@v1
+        with:
+          images: @image-names@
+          keep: ${{ steps.keep.outputs.keep }}

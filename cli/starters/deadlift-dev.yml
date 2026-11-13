@@ -1,0 +1,82 @@
+# The Dev Environment: every push to the tracked branch, @branch@, is built and deployed to dev,
+# at https://<app>.<tailnet>.ts.net/. A run that waited while the branch moved past its commit
+# deploys nothing, so a slow run never puts an older version over a newer one.
+name: deadlift-dev
+
+on:
+  push:
+    branches: [@branch@]
+
+permissions: {}
+
+# Naming the shell turns on pipefail, so a failure in a pipeline fails the step.
+defaults:
+  run:
+    shell: bash
+
+env:
+  DEADLIFT_APP: @app@
+  DEADLIFT_SERVER: @server@
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      images: ${{ steps.build.outputs.images }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - id: build
+        uses: hangindev/deadlift/actions/build@v1
+        with:
+          # One per line: a name, then any of context=, file= and target=.
+          images: |
+            @images@
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    # One Dev deploy at a time, never cancelled partway. A newer run waiting replaces an older one
+    # waiting.
+    concurrency:
+      group: deadlift-dev
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      # The Server pulls the images with this job's token.
+      packages: read
+      # deliver joins the tailnet with GitHub's OIDC token.
+      id-token: write
+    steps:
+      # After the wait, so that it sees every push made meanwhile.
+      - id: superseded
+        uses: hangindev/deadlift/actions/superseded@v1
+        with:
+          branch: ${{ github.ref_name }}
+      - if: steps.superseded.outputs.superseded == 'true'
+        env:
+          REASON: ${{ steps.superseded.outputs.reason }}
+        run: |
+          echo "::notice::Not deployed: ${REASON#deadlift: }"
+          echo "Not deployed. $REASON" >>"$GITHUB_STEP_SUMMARY"
+      - if: steps.superseded.outputs.superseded == 'false'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - if: steps.superseded.outputs.superseded == 'false'
+        uses: hangindev/deadlift/actions/deliver@v1
+        with:
+          app: ${{ env.DEADLIFT_APP }}
+          server: ${{ env.DEADLIFT_SERVER }}
+          operation: deploy
+          environment: dev
+          images: ${{ needs.build.outputs.images }}
+          compose: compose.yaml
+          oauth-client-id: ${{ vars.TS_OAUTH_CLIENT_ID }}
+          audience: ${{ vars.TS_AUDIENCE }}

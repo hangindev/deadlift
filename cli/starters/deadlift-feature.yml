@@ -1,0 +1,197 @@
+# A Feature Environment for each pull request, keyed by its number: feature-<number>, at its own
+# port on the App's Tailscale name. Each push to the pull request deploys it again at the same
+# address, unless the pull request has the `skip-deploy` label. Closing the pull request destroys
+# it, and deadlift-sweep catches any this misses. One comment on the pull request, edited in place,
+# and a "Feature Environment" check on the commit say where it is or why it isn't there.
+#
+# Pull requests from forks get nothing: their runs can't join the tailnet.
+name: deadlift-feature
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, unlabeled, closed]
+
+permissions: {}
+
+# Naming the shell turns on pipefail, so a failure in a pipeline fails the step.
+defaults:
+  run:
+    shell: bash
+
+env:
+  DEADLIFT_APP: @app@
+  DEADLIFT_SERVER: @server@
+
+jobs:
+  build:
+    if: >-
+      github.event.action != 'closed'
+      && github.event.pull_request.head.repo.full_name == github.repository
+      && !contains(github.event.pull_request.labels.*.name, 'skip-deploy')
+      && (github.event.action != 'unlabeled' || github.event.label.name == 'skip-deploy')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    # A newer push makes this build pointless.
+    concurrency:
+      group: deadlift-feature-build-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      images: ${{ steps.build.outputs.images }}
+    steps:
+      # The pull request's own head, not GitHub's merge of it into its base, so that the images
+      # are named after a commit the pull request has.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - id: build
+        uses: hangindev/deadlift/actions/build@v1
+        with:
+          commit: ${{ github.event.pull_request.head.sha }}
+          # One per line: a name, then any of context=, file= and target=.
+          images: |
+            @images@
+
+  # Deploys, or destroys once the pull request is closed.
+  deliver:
+    needs: build
+    if: >-
+      !cancelled()
+      && github.event.pull_request.head.repo.full_name == github.repository
+      && (needs.build.result == 'success' || github.event.action == 'closed')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    # One delivery per pull request at a time, never cancelled partway. A newer run waiting
+    # replaces an older one waiting, so a close's destroy replaces a deploy still waiting.
+    concurrency:
+      group: deadlift-feature-${{ github.event.pull_request.number }}
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      # The Server pulls the images with this job's token.
+      packages: read
+      # deliver joins the tailnet with GitHub's OIDC token.
+      id-token: write
+      pull-requests: write
+      checks: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      PR: ${{ github.event.pull_request.number }}
+      HEAD: ${{ github.event.pull_request.head.sha }}
+    steps:
+      # What to do, from the pull request as it is now, after any wait: one closed since gets no
+      # Environment back, a newer push has its own run, and the label is read now, not from the
+      # event, which a re-run repeats.
+      - id: now
+        run: |
+          if [[ $ACTION == closed ]]; then
+            echo "operation=destroy" >>"$GITHUB_OUTPUT"
+            exit 0
+          fi
+          pr=$(gh api "repos/$REPO/pulls/$PR" \
+            --jq '"\(.state) \(.head.sha) \(any(.labels[]; .name == "skip-deploy"))"')
+          read -r state head skip <<<"$pr"
+          if [[ $state != open ]]; then
+            echo "::notice::Not deployed: #$PR is closed."
+          elif [[ $head != "$HEAD" ]]; then
+            echo "::notice::Not deployed: a newer push to #$PR deploys instead."
+          elif [[ $skip == true ]]; then
+            echo "::notice::Not deployed: #$PR has the skip-deploy label."
+          else
+            # The Feature Environments to keep: every open pull request's. The deploy destroys
+            # the rest if it needs their Slots. Into a variable first, so that a failed listing
+            # fails here rather than keeping nothing.
+            open=$(gh api --paginate "repos/$REPO/pulls?state=open&per_page=100" \
+              --jq '.[] | select(.head.repo.full_name == env.REPO) | .number')
+            echo "keep=$(paste -sd, - <<<"$open")" >>"$GITHUB_OUTPUT"
+            echo "operation=deploy" >>"$GITHUB_OUTPUT"
+          fi
+        env:
+          ACTION: ${{ github.event.action }}
+      - if: steps.now.outputs.operation == 'deploy'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - id: deliver
+        if: steps.now.outputs.operation != ''
+        uses: hangindev/deadlift/actions/deliver@v1
+        with:
+          app: ${{ env.DEADLIFT_APP }}
+          server: ${{ env.DEADLIFT_SERVER }}
+          operation: ${{ steps.now.outputs.operation }}
+          environment: feature-${{ github.event.pull_request.number }}
+          images: ${{ needs.build.outputs.images }}
+          keep: ${{ steps.now.outputs.keep }}
+          compose: compose.yaml
+          oauth-client-id: ${{ vars.TS_OAUTH_CLIENT_ID }}
+          audience: ${{ vars.TS_AUDIENCE }}
+      # The pull request's one comment, and the commit's check. Also when the delivery failed or
+      # the job timed out, which GitHub counts as cancelled.
+      - if: always() && steps.now.outputs.operation != ''
+        env:
+          OPERATION: ${{ steps.now.outputs.operation }}
+          OUTCOME: ${{ steps.deliver.outputs.outcome }}
+          REASON: ${{ steps.deliver.outputs.reason }}
+          URL: ${{ steps.deliver.outputs.url }}
+          RUN_URL: >-
+            ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          marker="<!-- deadlift-feature -->"
+          # comment <text> [update-only]: puts <text> in the pull request's one comment.
+          comment() {
+            local ids id
+            ids=$(gh api --paginate "repos/$REPO/issues/$PR/comments?per_page=100" \
+              --jq ".[] | select(.body | startswith(\"$marker\")) | .id")
+            id=${ids%%$'\n'*}
+            if [[ -n $id ]]; then
+              gh api --method PATCH "repos/$REPO/issues/comments/$id" -f body="$marker
+          $1" >/dev/null
+            elif [[ -z ${2:-} ]]; then
+              gh api --method POST "repos/$REPO/issues/$PR/comments" -f body="$marker
+          $1" >/dev/null
+            fi
+          }
+          # check <conclusion> <title> <summary>: the commit's Feature Environment check.
+          check() {
+            gh api --method POST "repos/$REPO/check-runs" -f name="Feature Environment" \
+              -f head_sha="$HEAD" -f status=completed -f conclusion="$1" \
+              -f "output[title]=$2" -f "output[summary]=$3" >/dev/null
+          }
+          title="**Feature Environment** \`feature-$PR\`"
+          commit="\`${HEAD::7}\`"
+          run="[The run]($RUN_URL)"
+          reason="> ${REASON:-It failed before reaching the Server.}"
+          case $OPERATION:$OUTCOME in
+            deploy:done)
+              comment "$title is up at $URL, on $commit."
+              check success "Up at $URL" "\`feature-$PR\` is up at $URL, on $commit."
+              ;;
+            deploy:skipped)
+              comment "$title: $commit wasn't deployed.
+
+          $reason
+
+          Push again, or re-run $run, once that's dealt with."
+              check neutral "Not deployed" "$REASON"
+              ;;
+            deploy:*)
+              comment "$title: the deploy of $commit failed. The next push tries again.
+
+          $reason
+
+          $run has the details."
+              ;;
+            destroy:done) comment "$title was destroyed, as this closed." update-only ;;
+            destroy:*)
+              comment "$title: destroying it failed. The next deadlift-sweep run tries again.
+
+          $reason
+
+          $run has the details." update-only
+              ;;
+          esac
