@@ -1,4 +1,4 @@
-# The example App's one image, for the Seam A tests. It builds in seconds, from an image this
+# The example App's one image, for the delivery tests. It builds in seconds, from an image this
 # repo's tests already use, and stands in for an App's real images: a web server, a health check
 # and a migration that keeps its schema version in the App's named volume.
 #

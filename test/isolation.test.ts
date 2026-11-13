@@ -1,10 +1,11 @@
-// Seam A on a bootstrapped Server: what an App's containers can reach, and who owns what they
-// write (ADR 0001). Only a Server that `deadlift server bootstrap` set up has the firewall and
-// userns-remap, so these run in CI on the runner Seam B bootstrapped, and are skipped elsewhere.
-// They change the machine's network for their length, so they also need a throwaway machine.
+// The delivery tests on a bootstrapped Server: what an App's containers can reach, and who owns
+// what they write (ADR 0001). Only a Server that `deadlift server bootstrap` set up has the
+// firewall and userns-remap, so these run in CI on the runner the server-setup tests
+// bootstrapped, and are skipped elsewhere. They change the machine's network for their length, so
+// they also need a throwaway machine.
 //
-// DEADLIFT_TEST_BOOTSTRAPPED=true, as the CI job sets after Seam B, makes them required: they
-// fail instead of being skipped when the machine isn't a bootstrapped Server.
+// DEADLIFT_TEST_BOOTSTRAPPED=true, as the CI job sets after the server-setup tests, makes them
+// required: they fail instead of being skipped when the machine isn't a bootstrapped Server.
 import { execFile } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { createServer, connect, type Server } from "node:net";

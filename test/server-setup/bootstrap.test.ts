@@ -1,9 +1,9 @@
-// Seam B: setting up a Server. Runs the real `deadlift server bootstrap` against this machine
-// over real SSH as root, with only `tailscale` faked, so it reconfigures this machine's Docker and
-// firewall for good. It refuses to start anywhere but a throwaway machine: the GitHub-hosted
-// ubuntu-24.04 runner in CI, or a Multipass VM (test/seam-b/multipass.sh).
+// The server-setup tests: setting up a Server. Runs the real `deadlift server bootstrap` against
+// this machine over real SSH as root, with only `tailscale` faked, so it reconfigures this
+// machine's Docker and firewall for good. It refuses to start anywhere but a throwaway machine: the
+// GitHub-hosted ubuntu-24.04 runner in CI, or a Multipass VM (test/server-setup/multipass.sh).
 //
-// In CI, Seam A then runs on the Server this leaves behind (test/isolation.test.ts).
+// In CI, the delivery tests then run on the Server this leaves behind (test/isolation.test.ts).
 import { execFile } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
@@ -59,11 +59,11 @@ async function firewall(): Promise<string> {
 
 beforeAll(async () => {
   const why = whyNotThrowaway();
-  if (why) throw new Error(`Refusing to run Seam B: ${why}.`);
+  if (why) throw new Error(`Refusing to run the server-setup tests: ${why}.`);
   work = await mkdtemp(join(tmpdir(), `${prefix}-`));
   // The maintainer's SSH, with a key of its own that root on this machine accepts.
   await ok("ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", join(work, "key"));
-  await ok("sudo", "bash", join(repo, "test/seam-b/prepare.sh"), join(work, "key.pub"));
+  await ok("sudo", "bash", join(repo, "test/server-setup/prepare.sh"), join(work, "key.pub"));
   await ok("mkdir", join(work, "bin"));
   await writeFile(
     join(work, "bin/ssh"),

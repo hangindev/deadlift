@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# A fake `ssh` for the Seam A tests, on the CI side's PATH. Instead of reaching a Server over the
+# A fake `ssh` for the delivery tests, on the CI side's PATH. Instead of reaching a Server over the
 # tailnet, it runs the remote command on the fake Server in $DEADLIFT_TEST_SERVER, logged in as the
 # user before the `@`, the way Tailscale SSH would: a login shell with a fresh environment, where
 # `sudo` is the fake Server's and enforces the one sudo rule.

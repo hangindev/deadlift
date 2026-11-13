@@ -1,5 +1,5 @@
-// The guard that keeps Seam B, and the Seam A tests that need a bootstrapped Server, off any
-// machine that isn't thrown away after the run.
+// The guard that keeps the server-setup tests, and the delivery tests that need a bootstrapped
+// Server, off any machine that isn't thrown away after the run.
 import { describe, expect, test } from "vitest";
 import { whyNotThrowaway } from "./support/throwaway.ts";
 
@@ -10,7 +10,7 @@ describe("the throwaway-machine guard", () => {
     expect(whyNotThrowaway(runner, false)).toBeUndefined();
   });
 
-  test("lets a Multipass VM marked by test/seam-b/multipass.sh through", () => {
+  test("lets a Multipass VM marked by test/server-setup/multipass.sh through", () => {
     expect(whyNotThrowaway({}, true)).toBeUndefined();
   });
 

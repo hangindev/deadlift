@@ -1,7 +1,7 @@
-// Seam A: a delivery end to end. A test delivers as an App's CI would, through the `deliver`
-// client script, to a fake Server: an `ssh` shim logs in as the App's deploy user, a fake `sudo`
-// allows only the entry command, and the entry command runs the deploy script installed on the
-// fake Server against real Docker. Around it: a fake `tailscale`, a local registry holding the
+// The delivery tests: a delivery end to end. A test delivers as an App's CI would, through the
+// `deliver` client script, to a fake Server: an `ssh` shim logs in as the App's deploy user, a fake
+// `sudo` allows only the entry command, and the entry command runs the deploy script installed on
+// the fake Server against real Docker. Around it: a fake `tailscale`, a local registry holding the
 // example App's images, and a temporary state directory set up for two Apps.
 //
 // This machine may be shared, and several runs may overlap. Everything a run creates carries one
@@ -73,13 +73,15 @@ async function requireTools() {
     try {
       await run("sh", ["-c", `command -v ${tool}`]);
     } catch {
-      throw new Error(`The Seam A tests need ${tool}, which every Server has`);
+      throw new Error(`The delivery tests need ${tool}, which every Server has`);
     }
   }
   try {
     await run("python3", ["-I", "-c", "import yaml"]);
   } catch {
-    throw new Error("The Seam A tests need python3 with PyYAML (python3-yaml), which every Server has");
+    throw new Error(
+      "The delivery tests need python3 with PyYAML (python3-yaml), which every Server has",
+    );
   }
 }
 

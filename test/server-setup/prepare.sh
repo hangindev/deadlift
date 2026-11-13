@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Readies a throwaway machine for Seam B, as root: `deadlift server bootstrap localhost` then
-# reaches it over real SSH as root, with the test's own key, and finds a stand-in `tailscale`,
-# the one thing faked, so bootstrap doesn't install the real one, and deploys and `deadlift app`
-# get the answers a Server's Tailscale would give.
+# Readies a throwaway machine for the server-setup tests, as root: `deadlift server bootstrap
+# localhost` then reaches it over real SSH as root, with the test's own key, and finds a stand-in
+# `tailscale`, the one thing faked, so bootstrap doesn't install the real one, and deploys and
+# `deadlift app` get the answers a Server's Tailscale would give.
 #
 #   prepare.sh <public key file>
 #
@@ -31,7 +31,7 @@ for rule in /etc/sudoers.d/*; do
   if [[ -f $rule && $(stat -c %a "$rule") != 440 ]]; then chmod 0440 "$rule"; fi
 done
 
-# The Seam A tests' fake, which answers what the deploy script and app.sh ask of Tailscale on a
+# The delivery tests' fake, which answers what the deploy script and app.sh ask of Tailscale on a
 # Server. Installed over an earlier stand-in, never over a real tailscale.
 fake=$(dirname "${BASH_SOURCE[0]}")/../fakes/tailscale
 if ! command -v tailscale >/dev/null || grep -qF 'fake tailscale:' /usr/local/bin/tailscale 2>/dev/null; then

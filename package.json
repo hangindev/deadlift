@@ -8,7 +8,7 @@
   },
   "scripts": {
     "test": "vitest run",
-    "test:seam-b": "vitest run --config vitest.seam-b.config.ts",
+    "test:server-setup": "vitest run --config vitest.server-setup.config.ts",
     "check-types": "tsc --noEmit"
   },
   "devDependencies": {

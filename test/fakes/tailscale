@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# A fake `tailscale` for the Seam A tests, installed on the fake Server's PATH ahead of any real
+# A fake `tailscale` for the delivery tests, installed on the fake Server's PATH ahead of any real
 # one. It answers only what deadlift asks of Tailscale on a Server, keeping each Service's Serve
 # mappings as Tailscale would:
 #

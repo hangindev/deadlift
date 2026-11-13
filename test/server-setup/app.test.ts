@@ -1,7 +1,7 @@
-// Seam B: an App's place on a Server. Runs the real `deadlift app add`, `app secrets`, `app
-// remove` and `server status` against this machine over real SSH as root, after the real
-// bootstrap, with only `tailscale` and the Tailscale API faked. A delivery then reaches the App's
-// Dev Environment over real SSH as its deploy user, through its real sudo rule. Like
+// The server-setup tests: an App's place on a Server. Runs the real `deadlift app add`, `app
+// secrets`, `app remove` and `server status` against this machine over real SSH as root, after the
+// real bootstrap, with only `tailscale` and the Tailscale API faked. A delivery then reaches the
+// App's Dev Environment over real SSH as its deploy user, through its real sudo rule. Like
 // bootstrap.test.ts, it refuses to start anywhere but a throwaway machine.
 import { execFile } from "node:child_process";
 import { randomBytes } from "node:crypto";
@@ -144,10 +144,10 @@ function apiWrites() {
 
 beforeAll(async () => {
   const why = whyNotThrowaway();
-  if (why) throw new Error(`Refusing to run Seam B: ${why}.`);
+  if (why) throw new Error(`Refusing to run the server-setup tests: ${why}.`);
   work = await mkdtemp(join(tmpdir(), `${prefix}-`));
   await ok("ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", join(work, "key"));
-  await ok("sudo", "bash", join(repo, "test/seam-b/prepare.sh"), join(work, "key.pub"));
+  await ok("sudo", "bash", join(repo, "test/server-setup/prepare.sh"), join(work, "key.pub"));
   await mkdir(join(work, "bin"));
   await writeFile(
     join(work, "bin/ssh"),
