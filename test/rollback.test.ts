@@ -93,4 +93,20 @@ describe("rollback dev", () => {
     expect(await server.fileInVolumeSnapshot(app, taken[0] ?? "", "note")).toBe("written on v2");
     expect(result.reason).toContain(taken[0]);
   });
+
+  test("goes back one step only", async () => {
+    const server = await harness.server();
+    await deployDev(server, 1, { template: await templateForRelease("first") });
+    await deployDev(server, 1, { template: await templateForRelease("second") });
+    await deployDev(server, 1, { template: await templateForRelease("third") });
+    expect((await rollback(server, "dev")).outcome).toBe("done");
+    const before = await server.startedAt(server.apps.a.name, "dev", "web");
+
+    const result = await rollback(server, "dev");
+
+    expect(result.code, result.output).toBe(2);
+    expect(result.reason).toMatch(/^deadlift: .*no previous version/);
+    expect(await get(server.devPort("a"), "/env/RELEASE")).toBe("second");
+    expect(await server.startedAt(server.apps.a.name, "dev", "web")).toBe(before);
+  });
 });

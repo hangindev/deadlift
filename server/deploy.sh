@@ -603,6 +603,9 @@ rollback_dev() {
   local previous=$state/apps/$app/environments/dev/previous
   local snapshots=$state/apps/$app/environments/dev/snapshots snapshot
   project=deadlift-$app-dev
+  [[ -f $dir/compose.yaml ]] || refuse "dev hasn't been deployed, so there's nothing to roll back"
+  [[ -f $previous/compose.yaml ]] ||
+    refuse "dev has no previous version to roll back to: Rollback goes back one step only, and only once Dev has had two versions. To go further back, deploy an earlier commit. Nothing was changed"
   url=$(sed -n 's/^DEADLIFT_URL=//p' "$dir/vars.env")
   config=$(compose "$previous" config --format json 2>"$delivery/config.err") ||
     fail "couldn't read dev's previous version: $(tail -n 1 "$delivery/config.err"). Nothing was changed"
