@@ -110,3 +110,17 @@ describe("rollback dev", () => {
     expect(await server.startedAt(server.apps.a.name, "dev", "web")).toBe(before);
   });
 });
+
+test("rollback is refused for a Feature Environment", async () => {
+  const server = await harness.server();
+  const app = server.apps.a.name;
+  const deployed = await server.deliver(app, ["deploy", "feature-42", "--image", `web=${await harness.image()}`]);
+  expect(deployed.outcome, deployed.output).toBe("done");
+  const before = await server.startedAt(app, "feature-42", "web");
+
+  const result = await rollback(server, "feature-42");
+
+  expect(result.code, result.output).toBe(2);
+  expect(result.reason).toMatch(/^deadlift: .*only .*Dev Environment/);
+  expect(await server.startedAt(app, "feature-42", "web")).toBe(before);
+});

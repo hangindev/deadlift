@@ -708,6 +708,11 @@ op_rollback() {
       *) usage "unknown argument '$1' for rollback" ;;
     esac
   done
+  case $env in
+    dev) ;;
+    feature-*) check_feature_key && refuse "Rollback is only for the Dev Environment, dev, and $env is a Feature Environment: deploy it again from an earlier commit instead. Nothing was changed" ;;
+    *) usage "'$env' isn't the Dev Environment: rollback takes dev" ;;
+  esac
   read_app
   take_lock
   rollback_dev
