@@ -34,7 +34,7 @@ app=${1:-}
 shift
 # The same rules as `deadlift app add`.
 [[ $app =~ ^[a-z]([a-z0-9-]{0,21}[a-z0-9])?$ && ! $app =~ -feature(-|$) ]] ||
-  usage "'$app' isn't an App name: up to 23 of a-z, 0-9 and -, starting with a letter, as \`deadlift app add\` named it"
+  usage "'$app' isn't an App name, as \`deadlift app add\` takes them: up to 23 of a-z, 0-9 and -"
 server='' branch=main images=()
 while (($#)); do
   case $1 in
@@ -87,9 +87,11 @@ render() {
   done <"$starters/$1.yml"
 }
 
+# The header's 3 lines, holding the hash of the rest of the file as deadlift init wrote it.
 header() {
-  echo "# Written by \`deadlift init\` (starter sha256:$1). The App's own: once this file changes,"
-  echo "# deadlift init leaves it alone."
+  echo "# Written by \`deadlift init\`, and the App's own: once this file changes, deadlift init"
+  echo "# leaves it alone. Starter sha256:$1"
+  echo "#"
 }
 
 mkdir -p "$repo/.github/workflows"
@@ -100,12 +102,12 @@ for name in "${names[@]}"; do
   new=$(header "$(printf '%s\n' "$body" | sha256)" && printf '%s\n' "$body")
   if [[ -e $file ]]; then
     # What deadlift init wrote last, by the hash in its header, and what the file holds now.
-    written=$(sed -n '1s/.*(starter sha256:\([0-9a-f]\{64\}\)).*/\1/p' "$file")
+    written=$(sed -n '2s/^# .* Starter sha256:\([0-9a-f]\{64\}\)$/\1/p' "$file")
     if [[ -z $written ]]; then
       echo "Kept $shown, which deadlift init didn't write"
       continue
     fi
-    if [[ $(tail -n +3 "$file" | sha256) != "$written" ]]; then
+    if [[ $(tail -n +4 "$file" | sha256) != "$written" ]]; then
       echo "Kept $shown, which has changed since deadlift init wrote it"
       continue
     fi

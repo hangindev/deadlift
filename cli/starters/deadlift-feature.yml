@@ -138,7 +138,8 @@ jobs:
           OUTCOME: ${{ steps.deliver.outputs.outcome }}
           REASON: ${{ steps.deliver.outputs.reason }}
           URL: ${{ steps.deliver.outputs.url }}
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          RUN_URL: >-
+            ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           marker="<!-- deadlift-feature -->"
           # comment <text> [update-only]: puts <text> in the pull request's one comment.
@@ -161,39 +162,36 @@ jobs:
               -f head_sha="$HEAD" -f status=completed -f conclusion="$1" \
               -f "output[title]=$2" -f "output[summary]=$3" >/dev/null
           }
-          environment="feature-$PR"
+          title="**Feature Environment** \`feature-$PR\`"
           commit="\`${HEAD::7}\`"
-          details="[The run]($RUN_URL) has the details."
+          run="[The run]($RUN_URL)"
           reason="> ${REASON:-It failed before reaching the Server.}"
           case $OPERATION:$OUTCOME in
             deploy:done)
-              comment "**Feature Environment** \`$environment\` is up at $URL, on $commit."
-              check success "Up at $URL" "\`$environment\` is up at $URL, on $commit."
+              comment "$title is up at $URL, on $commit."
+              check success "Up at $URL" "\`feature-$PR\` is up at $URL, on $commit."
               ;;
             deploy:skipped)
-              comment "**Feature Environment:** $commit wasn't deployed.
+              comment "$title: $commit wasn't deployed.
 
           $reason
 
-          Push again, or re-run [the run]($RUN_URL), once that's dealt with."
+          Push again, or re-run $run, once that's dealt with."
               check neutral "Not deployed" "$REASON"
               ;;
             deploy:*)
-              comment "**Feature Environment:** the deploy of $commit failed. The next push tries again.
+              comment "$title: the deploy of $commit failed. The next push tries again.
 
           $reason
 
-          $details"
+          $run has the details."
               ;;
-            destroy:done)
-              comment "**Feature Environment** \`$environment\` was destroyed, as this closed." update-only
-              ;;
+            destroy:done) comment "$title was destroyed, as this closed." update-only ;;
             destroy:*)
-              comment "**Feature Environment:** destroying \`$environment\` failed. The next
-          deadlift-sweep run tries again.
+              comment "$title: destroying it failed. The next deadlift-sweep run tries again.
 
           $reason
 
-          $details" update-only
+          $run has the details." update-only
               ;;
           esac
