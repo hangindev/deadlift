@@ -148,7 +148,9 @@ export async function startHarness() {
   const prefix = `deadlift-test-${randomBytes(4).toString("hex")}`;
   const root = await mkdtemp(join(tmpdir(), `${prefix}-`));
   // The registry shares the daemon's network and listens on its loopback, which Docker trusts
-  // without TLS. Its debug server would take :5001, so a second run couldn't start.
+  // without TLS. Its debug server would take :5001, so a second run couldn't start. On a
+  // bootstrapped Server, Docker remaps users, and shares the host's network only with a container
+  // that opts out of the remap.
   const registryPort = await freePort();
   const registryDebugPort = await freePort();
   await docker(
@@ -156,6 +158,8 @@ export async function startHarness() {
     "--detach",
     "--name",
     `${prefix}-registry`,
+    "--userns",
+    "host",
     "--network",
     "host",
     "--env",
