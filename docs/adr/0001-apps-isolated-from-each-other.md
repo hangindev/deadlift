@@ -19,7 +19,7 @@ Each App has its own CI tag and its own deploy user, and the deploy user may run
 deadlift-myapp ALL=(root) NOPASSWD: /usr/local/sbin/deadlift-entry
 ```
 
-The rule names no arguments, so the operation and its arguments are the entry command's to check. It works out the App from the user who called it (`SUDO_USER`, here `deadlift-myapp`), so a deploy user can only ever act on its own App, whatever arguments it passes. The deploy user isn't in the `docker` group, so the entry command pulls the App's images too, with the job's short-lived token sent inside the delivery and removed after.
+The rule names no arguments, so the operation and its arguments are the entry command's to check. It works out the App from the user who called it (`SUDO_USER`, here `deadlift-myapp`), so a deploy user can only ever act on its own App, whatever arguments it passes. The deploy user isn't in the `docker` group, so the entry command pulls the App's images too, with the job's short-lived token sent inside the delivery and removed after. The deploy script itself is installed on the Server alongside the entry command and never delivered: a delivered script would run as root, so any App could reach every other App through it.
 
 ```mermaid
 flowchart LR
@@ -42,7 +42,7 @@ flowchart LR
   CIB -->|"joins as"| TB
   TA -->|"SSH :22, only as"| UA
   TB -->|"SSH :22, only as"| UB
-  UA -->|"sudo, the one rule,<br/>one tar on stdin:<br/>deploy script, compose.yaml,<br/>the job's token"| ENTRY
+  UA -->|"sudo, the one rule,<br/>one tar on stdin:<br/>compose.yaml and<br/>the job's token"| ENTRY
   UB -->|"sudo, the one rule"| ENTRY
   ENTRY -->|"called by deadlift-a"| SA
   ENTRY -->|"called by deadlift-b"| SB
@@ -102,3 +102,4 @@ Without the dropped routes, one App's Environment could open another App's Envir
 - An App can't use bind mounts, host files, `build`, extra capabilities, the Docker socket or its own published ports. An App that needs one of them works around it or doesn't use deadlift.
 - Every App needs its own Tailscale tag, SSH rule, federated credential and deploy user. Adding an App walks through these.
 - Within an App, whoever can get a commit delivered controls that App's Environments and their data.
+- A fix to deadlift's deploy script reaches a Server when its bootstrap is re-run, not on an App's next delivery.
