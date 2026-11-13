@@ -52,6 +52,50 @@ test("variables from the App's dev.env don't reach its Feature Environments", as
   expect(await get(server.slotPort("a", 1), "/env/GREETING")).toBe("");
 });
 
+test("variables from the App's dev.env reach its Dev Environment, with deadlift's own", async () => {
+  const server = await harness.server();
+  const app = server.apps.a.name;
+  await server.secrets(app, "dev", "GREETING=hello from dev.env\n");
+  await server.secrets(app, "feature", "GREETING=hello from feature.env\n");
+  const template = await templateWithEnvironment({
+    GREETING: "${GREETING}",
+    ENVIRONMENT: "${DEADLIFT_ENV}",
+    URL: "${DEADLIFT_URL}",
+  });
+
+  const result = await server.deliver(
+    app,
+    ["deploy", "dev", "--image", `web=${await harness.image()}`],
+    { template },
+  );
+
+  expect(result.outcome, result.output).toBe("done");
+  expect(await get(server.devPort("a"), "/env/GREETING")).toBe("hello from dev.env");
+  expect(await get(server.devPort("a"), "/env/ENVIRONMENT")).toBe("dev");
+  expect(await get(server.devPort("a"), "/env/URL")).toBe(`https://${app}.tailtest.ts.net/`);
+});
+
+test("Dev's DEADLIFT_SECRET stays the same across its deploys", async () => {
+  const server = await harness.server();
+  const app = server.apps.a.name;
+  const template = await templateWithEnvironment({ SECRET: "${DEADLIFT_SECRET}" });
+  const deploy = async (version: number) => {
+    const result = await server.deliver(
+      app,
+      ["deploy", "dev", "--image", `web=${await harness.image("healthy", version)}`],
+      { template },
+    );
+    expect(result.outcome, result.output).toBe("done");
+    return get(server.devPort("a"), "/env/SECRET");
+  };
+
+  const first = await deploy(1);
+  const second = await deploy(2);
+
+  expect(first).toMatch(/^[0-9a-f]{64}$/);
+  expect(second).toBe(first);
+});
+
 test("one App's secrets never reach another App's Environments", async () => {
   const server = await harness.server();
   const [a, b] = [server.apps.a.name, server.apps.b.name];
