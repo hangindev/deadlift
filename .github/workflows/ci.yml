@@ -32,7 +32,9 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm check-types
       # The runner image ships shellcheck.
-      - run: shellcheck server/*.sh actions/*/*.sh test/fakes/*
+      - run: find server actions test/*.sh test/fakes -type f ! -name '*.yml' -print0 | xargs -0 shellcheck
+      # The workflows, and the composite actions written out as workflows.
+      - run: test/actionlint.sh
 
   # Seam A: deliveries end to end, through the deliver client script, the entry command and the
   # installed deploy script, against this runner's Docker.

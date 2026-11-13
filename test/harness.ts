@@ -95,6 +95,8 @@ export type Delivery = Result & {
   url?: string;
   environment?: string;
   swept?: string;
+  /** What it wrote to the job summary. */
+  summary: string;
 };
 
 /** An App's limits for each of its containers, as `deadlift app add` sets them: memory as Docker
@@ -306,6 +308,8 @@ export async function startHarness() {
       await writeFile(join(job, "compose.yaml"), options.template ?? (await exampleTemplate()));
       const outputFile = join(job, "github-output");
       await writeFile(outputFile, "");
+      const summaryFile = join(job, "step-summary");
+      await writeFile(summaryFile, "");
       const result = await collect(
         join(repo, "actions/deliver/deliver.sh"),
         ["--server", "server.tailtest.ts.net", "--app", app, ...args],
@@ -313,13 +317,15 @@ export async function startHarness() {
           cwd: job,
           env: clientEnv({
             GITHUB_OUTPUT: outputFile,
+            GITHUB_STEP_SUMMARY: summaryFile,
             DEADLIFT_REGISTRY_TOKEN: options.token ?? "test-registry-token",
           }),
         },
       );
       const outputs = parseOutputs(await readFile(outputFile, "utf8"));
+      const summary = await readFile(summaryFile, "utf8");
       await rm(job, { recursive: true, force: true });
-      return { ...result, ...outputs };
+      return { ...result, ...outputs, summary };
     }
 
     /**

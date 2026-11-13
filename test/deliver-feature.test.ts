@@ -30,6 +30,17 @@ describe("deploy feature-<key>", () => {
     expect(await get(server.slotPort("a", 1), "/version")).toBe("1");
   });
 
+  test("explains itself in the job summary", async () => {
+    const server = await harness.server();
+    const app = server.apps.a.name;
+
+    const result = await server.deliver(app, ["deploy", "feature-42", "--image", `web=${await harness.image()}`]);
+
+    expect(result.summary).toContain("deadlift deploy feature-42: done");
+    expect(result.summary).toContain(result.reason!);
+    expect(result.summary).toContain(`Address: https://${app}.tailtest.ts.net:10001/`);
+  });
+
   test("maps the App's Service to the Environment's loopback port", async () => {
     const server = await harness.server();
     const app = server.apps.a.name;
