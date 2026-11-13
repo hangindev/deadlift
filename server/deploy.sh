@@ -28,6 +28,16 @@
 # when a one-shot service that nothing depends on exits 0. A migration the routed service depends
 # on still has to succeed first.
 #
+# Variables reach the template through Compose's ${VAR} substitution, and nothing else: the
+# App's secrets file for the kind of Environment (dev.env for Dev, feature.env for Feature),
+# and deadlift's own, which win over the secrets file's:
+#   DEADLIFT_ENV             The Environment: dev or feature-<key>.
+#   DEADLIFT_APP             The App.
+#   DEADLIFT_URL             The Environment's URL.
+#   DEADLIFT_SECRET          Random, made on the Environment's first deploy and kept until it's
+#                            destroyed.
+#   DEADLIFT_IMAGE_<NAME>    Each --image.
+#
 # Ports: each App has a block of 100 loopback ports from its `port_base`. The Dev Environment is
 # at the base, and the Feature Environment holding Slot s at base + 10s. Tailscale Serve maps
 # them on the App's own Service, svc:<app> (ADR 0003): Dev at HTTPS 443, and Slot s at
@@ -39,9 +49,12 @@
 #                                   `deadlift app add`: port_base=<port> and slots=<n>, and
 #                                   the per-container limits memory=<size, e.g. 512m>,
 #                                   cpus=<n> and pids=<n> (template.sh has the defaults).
+#   apps/<app>/dev.env, feature.env The App's secrets files, written by `deadlift app secrets`.
 #   apps/<app>/environments/<env>/  An Environment: its template (compose.yaml), the variables
-#                                   it was deployed with (vars.env), deadlift's override
-#                                   (override.json) and, for Feature, the Slot it holds (slot).
+#                                   it was deployed with (secrets.env, a copy of its secrets
+#                                   file, and vars.env, deadlift's), its DEADLIFT_SECRET (secret),
+#                                   deadlift's override (override.json) and, for Feature, the
+#                                   Slot it holds (slot). Destroying it removes the directory.
 #   deliveries/                     Deliveries while their operation runs.
 #
 # Every reason line starts with `deadlift: `, and the last one says what happened. Outputs for
@@ -121,15 +134,48 @@ read_tailnet_suffix() {
 
 # Runs `docker compose` for the Environment whose files are in $1, as the project $project: its
 # template, and deadlift's override once there is one. The template sees only the variables in
-# vars.env: nothing from this script's own environment, or its caller's, reaches it.
+# secrets.env and vars.env, vars.env winning: nothing from this script's own environment, or its
+# caller's, reaches it.
 compose() {
   local dir=$1 files
   shift
   files=(--file "$dir/compose.yaml")
   if [[ -f $dir/override.json ]]; then files+=(--file "$dir/override.json"); fi
+  if [[ -f $dir/secrets.env ]]; then files=(--env-file "$dir/secrets.env" "${files[@]}"); fi
   env -i PATH="$PATH" HOME="${HOME:-/root}" ${DOCKER_HOST:+"DOCKER_HOST=$DOCKER_HOST"} \
     docker compose --project-name "$project" --project-directory "$dir" \
-    --env-file "$dir/vars.env" "${files[@]}" "$@"
+    "${files[@]}" --env-file "$dir/vars.env" "$@"
+}
+
+# Writes the variables the template in $1 will see, for the Environment $env of $app at the URL
+# $2: secrets.env, a copy of the App's secrets file for that kind of Environment (dev.env or
+# feature.env), and vars.env, deadlift's own variables, which win over the secrets file's. Also
+# writes secret, the Environment's DEADLIFT_SECRET: the one it already has, or a new random one on
+# its first deploy, so it's kept until the Environment is destroyed.
+write_variables() {
+  local dir=$1 url=$2 secrets=$state/apps/$app/${env%%-*}.env name error
+  local secret=$state/apps/$app/environments/$env/secret
+  if [[ -f $secrets ]]; then cp "$secrets" "$dir/secrets.env"; else : >"$dir/secrets.env"; fi
+  # Read on its own first, so a broken secrets file isn't blamed on the template.
+  if ! error=$(echo 'services: {}' | env -i PATH="$PATH" HOME="${HOME:-/root}" \
+    ${DOCKER_HOST:+"DOCKER_HOST=$DOCKER_HOST"} docker compose --project-name "$project" \
+    --project-directory "$dir" --env-file "$dir/secrets.env" --file - config --quiet 2>&1); then
+    fail "$app's ${secrets##*/} on this Server isn't a valid env file: ${error##*secrets.env: }. Fix it and re-run \`deadlift app secrets $app ${env%%-*}\`. Nothing was changed"
+  fi
+  if [[ -s $secret ]]; then
+    cp "$secret" "$dir/secret"
+  else
+    od -An -N32 -tx1 /dev/urandom | tr -d ' \n' >"$dir/secret"
+  fi
+  {
+    echo "DEADLIFT_ENV=$env"
+    echo "DEADLIFT_APP=$app"
+    echo "DEADLIFT_URL=$url"
+    echo "DEADLIFT_SECRET=$(<"$dir/secret")"
+    for name in "${!images[@]}"; do
+      echo "DEADLIFT_IMAGE_${name^^}=${images[$name]}"
+    done
+  } >"$dir/vars.env"
 }
 
 # Checks the template in $1 with template.sh, and sets routed to the service its
@@ -193,27 +239,27 @@ claim_slot() {
 }
 
 deploy_feature() {
-  local next=$delivery/next dir=$state/apps/$app/environments/$env name url log
+  local next=$delivery/next dir=$state/apps/$app/environments/$env url log
   local suffix slot port public
   [[ -f $delivery/compose.yaml ]] || refuse "the delivery has no compose.yaml to deploy"
   project=deadlift-$app-$env
 
   mkdir "$next"
   cp "$delivery/compose.yaml" "$next/compose.yaml"
-  for name in "${!images[@]}"; do
-    echo "DEADLIFT_IMAGE_${name^^}=${images[$name]}"
-  done >"$next/vars.env"
-  check_template "$next"
+  # The Slot comes first, because the template sees the URL it gives.
   read_tailnet_suffix
   claim_slot
   port=$((port_base + 10 * slot))
   public=$((10000 + slot))
   url=https://$app.$suffix:$public/
+  write_variables "$next" "$url"
+  check_template "$next"
   write_override "$next" "$port"
   pull_images
 
   mkdir -p "$dir"
-  cp "$next/compose.yaml" "$next/vars.env" "$next/override.json" "$dir/"
+  cp "$next/compose.yaml" "$next/secrets.env" "$next/vars.env" "$next/secret" "$next/override.json" \
+    "$dir/"
   echo "$slot" >"$dir/slot"
   log=$delivery/up.log
   echo "Starting $env"

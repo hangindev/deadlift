@@ -75,6 +75,11 @@ async function requireTools() {
       throw new Error(`The Seam A tests need ${tool}, which every Server has`);
     }
   }
+  try {
+    await run("python3", ["-I", "-c", "import yaml"]);
+  } catch {
+    throw new Error("The Seam A tests need python3 with PyYAML (python3-yaml), which every Server has");
+  }
 }
 
 /** The example App's images: healthy, one whose health check never passes, and one whose
@@ -329,6 +334,14 @@ export async function startHarness() {
       });
     }
 
+    /** Puts an App's secrets file for its Dev or Feature Environments on the Server, as
+     * `deadlift app secrets <app> dev|feature <file>` does. Returns where it is on the Server. */
+    async function secrets(app: string, kind: "dev" | "feature", contents: string) {
+      const file = join(state, "apps", app, `${kind}.env`);
+      await writeFile(file, contents, { mode: 0o600 });
+      return file;
+    }
+
     /** What the fake `tailscale` serves now, for every App's Service. */
     async function serveMappings(): Promise<ServeMapping[]> {
       const { stdout } = await run(join(bin, "tailscale"), ["serve", "status", "--json"]);
@@ -385,6 +398,7 @@ export async function startHarness() {
       slotPort: (app: "a" | "b", slot: number) => apps[app].portBase + 10 * slot,
       deliver,
       send,
+      secrets,
       serveMappings,
       tailscaleCalls,
       holdLock,

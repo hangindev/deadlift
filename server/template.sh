@@ -329,8 +329,9 @@ override() {
       pids) pids=$value ;;
     esac
   done <"$limits"
-  memory=$(bytes "$memory") && [[ $cpus =~ ^[0-9]+(\.[0-9]+)?$ && $pids =~ ^[1-9][0-9]*$ ]] ||
+  if ! memory=$(bytes "$memory") || [[ ! $cpus =~ ^[0-9]+(\.[0-9]+)?$ || ! $pids =~ ^[1-9][0-9]*$ ]]; then
     fail "$app's limits in the Server registry are broken. Re-run \`deadlift app add $app\`"
+  fi
 
   config=$(check "$dir" "$project")
   # Each limit is the template's own where that's set and lower, else the App's.

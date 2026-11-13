@@ -179,6 +179,34 @@ describe("what a template may hold", () => {
   });
 });
 
+describe("another App's secrets file", () => {
+  afterAll(() => harness.removeServers());
+
+  const ways: Array<[string, (file: string) => Promise<string>]> = [
+    ["env_file", (file) => inWeb(`    env_file: ${file}\n`)],
+    ["a bind mount", (file) => withProbe(`    volumes:\n      - ${file}:/stolen.env:ro\n`)],
+    ["a config read from a file", (file) => using("configs", `    file: ${file}\n`)],
+    ["a secret read from a file", (file) => using("secrets", `    file: ${file}\n`)],
+  ];
+
+  test.each(ways)("can't be read by a template through %s", async (_, template) => {
+    const server = await harness.server();
+    const [a, b] = [server.apps.a.name, server.apps.b.name];
+    const file = await server.secrets(a, "feature", "A_ONLY=a's own secret\n");
+
+    const result = await server.deliver(
+      b,
+      ["deploy", "feature-1", "--image", `web=${await harness.image()}`],
+      { template: await template(file) },
+    );
+
+    expect(result.code, result.output).toBe(2);
+    expect(result.reason).toMatch(/^deadlift: .*ADR 0001/);
+    expect(result.output).not.toMatch(/a's own secret/);
+    expect(await server.containers(b)).toBe("");
+  });
+});
+
 describe("a template ADR 0001 refuses", () => {
   let server: Awaited<ReturnType<typeof harness.server>>;
   let app: string;
