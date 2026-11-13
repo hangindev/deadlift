@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# A fake `sudo` on a fake CI runner. It logs the call and runs the command only when it's one of
+# the fake runner's own tools beside it, so a test never runs anything as root.
+set -euo pipefail
+
+printf 'sudo %s\n' "$*" >>"${FAKE_RUNNER_STATE:?the fake sudo needs FAKE_RUNNER_STATE}/calls.log"
+fakes=$(dirname "$0")
+if [[ ! -x $fakes/${1:-} || $1 == */* ]]; then
+  echo "fake sudo: the fake runner has no ${1:-command} to run" >&2
+  exit 1
+fi
+exec "$fakes/$1" "${@:2}"

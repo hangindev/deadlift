@@ -22,6 +22,8 @@
 #                              url          the Environment's address, when it has one
 #                              environment  the Environment acted on
 #                              swept        the keys of Feature Environments the Sweep destroyed
+#   GITHUB_STEP_SUMMARY      Where the job summary goes, when set: the operation, its outcome and
+#                            reason, and the URL and swept keys when there are any.
 #
 # The delivery is one tar on the entry command's stdin, holding only compose.yaml and the token.
 # The Server runs its own installed deploy script, never anything delivered.
@@ -103,6 +105,22 @@ if [[ -n ${GITHUB_OUTPUT:-} ]]; then
     echo "environment=$(output environment)"
     echo "swept=$(output swept)"
   } >>"$GITHUB_OUTPUT"
+fi
+
+if [[ -n ${GITHUB_STEP_SUMMARY:-} ]]; then
+  title=$operation
+  if [[ -n ${2:-} && $2 != -* ]]; then title+=" $2"; fi
+  url=$(output url)
+  swept=$(output swept)
+  said=${reason:-"The Server gave no reason. The step's log has the details."}
+  {
+    echo "### deadlift $title: $outcome"
+    echo
+    echo "> $said"
+    if [[ -n $url || -n $swept ]]; then echo; fi
+    if [[ -n $url ]]; then echo "- Address: $url"; fi
+    if [[ -n $swept ]]; then echo "- Swept: ${swept//,/, }"; fi
+  } >>"$GITHUB_STEP_SUMMARY"
 fi
 
 if [[ $outcome == failed ]]; then exit "$status"; fi
