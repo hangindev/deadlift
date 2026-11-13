@@ -115,15 +115,33 @@ read_tailnet_suffix() {
 
 # Runs `docker compose` for the Environment whose files are in $1, as the project $project: its
 # template, and deadlift's override once there is one. The template sees only the variables in
-# vars.env: nothing from this script's own environment, or its caller's, reaches it.
+# secrets.env and vars.env, vars.env winning: nothing from this script's own environment, or its
+# caller's, reaches it.
 compose() {
   local dir=$1 files
   shift
   files=(--file "$dir/compose.yaml")
   if [[ -f $dir/override.json ]]; then files+=(--file "$dir/override.json"); fi
+  if [[ -f $dir/secrets.env ]]; then files=(--env-file "$dir/secrets.env" "${files[@]}"); fi
   env -i PATH="$PATH" HOME="${HOME:-/root}" ${DOCKER_HOST:+"DOCKER_HOST=$DOCKER_HOST"} \
     docker compose --project-name "$project" --project-directory "$dir" \
-    --env-file "$dir/vars.env" "${files[@]}" "$@"
+    "${files[@]}" --env-file "$dir/vars.env" "$@"
+}
+
+# Writes the variables the template in $1 will see, for the Environment $env of $app at the URL
+# $2: secrets.env, a copy of the App's secrets file for that kind of Environment (dev.env or
+# feature.env), and vars.env, deadlift's own variables, which win over the secrets file's.
+write_variables() {
+  local dir=$1 url=$2 secrets=$state/apps/$app/${env%%-*}.env name
+  if [[ -f $secrets ]]; then cp "$secrets" "$dir/secrets.env"; else : >"$dir/secrets.env"; fi
+  {
+    echo "DEADLIFT_ENV=$env"
+    echo "DEADLIFT_APP=$app"
+    echo "DEADLIFT_URL=$url"
+    for name in "${!images[@]}"; do
+      echo "DEADLIFT_IMAGE_${name^^}=${images[$name]}"
+    done
+  } >"$dir/vars.env"
 }
 
 # Checks the template in $1 and sets routed and route_port from its x-deadlift.route, and config
@@ -193,29 +211,28 @@ claim_slot() {
 }
 
 deploy_feature() {
-  local next=$delivery/next dir=$state/apps/$app/environments/$env name url log
+  local next=$delivery/next dir=$state/apps/$app/environments/$env url log
   local suffix slot port public
   [[ -f $delivery/compose.yaml ]] || refuse "the delivery has no compose.yaml to deploy"
   project=deadlift-$app-$env
 
   mkdir "$next"
   cp "$delivery/compose.yaml" "$next/compose.yaml"
-  for name in "${!images[@]}"; do
-    echo "DEADLIFT_IMAGE_${name^^}=${images[$name]}"
-  done >"$next/vars.env"
-  check_template "$next"
+  # The Slot comes first, because the template sees the URL it gives.
   read_tailnet_suffix
   claim_slot
   port=$((port_base + 10 * slot))
   public=$((10000 + slot))
   url=https://$app.$suffix:$public/
+  write_variables "$next" "$url"
+  check_template "$next"
   jq -n --arg service "$routed" --arg port "$port" --argjson target "$route_port" \
     '{services: {($service): {ports: [{host_ip: "127.0.0.1", published: $port, target: $target}]}}}' \
     >"$next/override.json"
   pull_images
 
   mkdir -p "$dir"
-  cp "$next/compose.yaml" "$next/vars.env" "$next/override.json" "$dir/"
+  cp "$next/compose.yaml" "$next/secrets.env" "$next/vars.env" "$next/override.json" "$dir/"
   echo "$slot" >"$dir/slot"
   log=$delivery/up.log
   echo "Starting $env"

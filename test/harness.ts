@@ -318,6 +318,12 @@ export async function startHarness() {
       });
     }
 
+    /** Puts an App's secrets file for its Dev or Feature Environments on the Server, as
+     * `deadlift app secrets <app> dev|feature <file>` does. */
+    async function secrets(app: string, kind: "dev" | "feature", contents: string) {
+      await writeFile(join(state, "apps", app, `${kind}.env`), contents, { mode: 0o600 });
+    }
+
     /** What the fake `tailscale` serves now, for every App's Service. */
     async function serveMappings(): Promise<ServeMapping[]> {
       const { stdout } = await run(join(bin, "tailscale"), ["serve", "status", "--json"]);
@@ -374,6 +380,7 @@ export async function startHarness() {
       slotPort: (app: "a" | "b", slot: number) => apps[app].portBase + 10 * slot,
       deliver,
       send,
+      secrets,
       serveMappings,
       tailscaleCalls,
       holdLock,
