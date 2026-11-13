@@ -9,7 +9,16 @@
 // are picked free at runtime.
 import { execFile, spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { chmod, copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  copyFile,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -399,6 +408,27 @@ async function removeListed(list: string[], remove: string[]) {
 /** Quotes a word for the remote shell, as `printf %q` would. */
 function shellQuote(word: string): string {
   return /^[\w@%+=:,./-]+$/.test(word) ? word : `'${word.replaceAll("'", "'\\''")}'`;
+}
+
+/** A member of a hand-made delivery: a file's contents, or a symlink or directory. */
+export type Member = string | { symlink: string } | { directory: true };
+
+/** A tar archive holding `members`, in that order, as a client other than `deliver` could send. */
+export async function tarOf(members: Record<string, Member>): Promise<Buffer> {
+  const dir = await mkdtemp(join(tmpdir(), "deadlift-test-tar-"));
+  try {
+    for (const [name, member] of Object.entries(members)) {
+      if (typeof member === "string") await writeFile(join(dir, name), member);
+      else if ("symlink" in member) await symlink(member.symlink, join(dir, name));
+      else await mkdir(join(dir, name));
+    }
+    const { stdout } = await run("tar", ["-C", dir, "-cf", "-", ...Object.keys(members)], {
+      encoding: "buffer",
+    });
+    return stdout;
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 }
 
 /** Fetches a path from an Environment on the host's loopback. */
