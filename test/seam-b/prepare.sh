@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Readies a throwaway machine for Seam B, as root: `deadlift server bootstrap localhost` then
 # reaches it over real SSH as root, with the test's own key, and finds a stand-in `tailscale`,
-# the one thing faked, so bootstrap doesn't install the real one.
+# the one thing faked, so bootstrap doesn't install the real one, and deploys and `deadlift app`
+# get the answers a Server's Tailscale would give.
 #
 #   prepare.sh <public key file>
 #
@@ -24,12 +25,9 @@ if ! grep -qxF "$(<"$key")" /root/.ssh/authorized_keys; then
   cat "$key" >>/root/.ssh/authorized_keys
 fi
 
-if ! command -v tailscale >/dev/null; then
-  cat >/usr/local/bin/tailscale <<'EOF'
-#!/usr/bin/env bash
-# Seam B's stand-in for Tailscale, so bootstrap finds it installed. Bootstrap never calls it.
-echo "fake tailscale: Seam B has no answer for 'tailscale $*'" >&2
-exit 1
-EOF
-  chmod 0755 /usr/local/bin/tailscale
+# The Seam A tests' fake, which answers what the deploy script and app.sh ask of Tailscale on a
+# Server. Installed over an earlier stand-in, never over a real tailscale.
+fake=$(dirname "${BASH_SOURCE[0]}")/../fakes/tailscale
+if ! command -v tailscale >/dev/null || grep -qF 'fake tailscale:' /usr/local/bin/tailscale 2>/dev/null; then
+  if ! cmp -s "$fake" /usr/local/bin/tailscale; then install -m 0755 "$fake" /usr/local/bin/tailscale; fi
 fi
