@@ -2,9 +2,14 @@
 # deadlift: the maintainer's command, run on their own computer.
 #
 # Usage:
+#   deadlift server provision
 #   deadlift server bootstrap <server>
 #   deadlift init <app> --server <server> [--branch <branch>] [--image <name>]...
 #
+#   server provision  A wizard that walks you through getting a new Server, step by step: the
+#                     tailnet policy, buying the machine, the provider's firewall, bootstrap,
+#                     joining the tailnet and closing public SSH. Stop it any time and run it
+#                     again to carry on (see cli/provision.sh).
 #   server bootstrap  Turns <server>, a fresh Ubuntu 24.04 machine or a Server already, into an up
 #                     to date Server. It sends this checkout's server/ over SSH as root and runs
 #                     its bootstrap.sh there (see it for what it sets up). Safe to run again: a
@@ -49,6 +54,10 @@ server_bootstrap() {
 }
 
 case "${1:-} ${2:-}" in
+  "server provision")
+    (($# == 2)) || usage "server provision takes no arguments: it asks for what it needs"
+    exec "$root/cli/provision.sh"
+    ;;
   "server bootstrap") shift 2 && server_bootstrap "$@" ;;
   "init "*) shift && exec "$root/cli/init.sh" "$@" ;;
   *) usage "'${*}' isn't a command" ;;

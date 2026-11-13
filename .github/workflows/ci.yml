@@ -34,8 +34,9 @@ jobs:
       # The runner image ships shellcheck.
       - run: >-
           find bin cli server actions test/*.sh test/fakes test/support test/seam-b -type f
-          ! -name '*.yml' ! -name '*.ts' -print0 | xargs -0 shellcheck
-      # The workflows, and the composite actions written out as workflows.
+          ! -name '*.yml' ! -name '*.ts' ! -name '*.hujson' -print0 | xargs -0 shellcheck
+      # The workflows, the composite actions written out as workflows, and the starter workflows
+      # as `deadlift init` writes them.
       - run: test/actionlint.sh
 
   # Seam A: deliveries end to end, through the deliver client script, the entry command and the
