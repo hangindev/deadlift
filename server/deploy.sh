@@ -6,7 +6,7 @@
 # the delivery.
 #
 # Usage:
-#   deploy.sh --app <app> --delivery <dir> deploy feature-<key> [--image <name>=<ref>]...
+#   deploy.sh --app <app> --delivery <dir> deploy dev|feature-<key> [--image <name>=<ref>]...
 #   deploy.sh --app <app> --delivery <dir> destroy feature-<key>
 #
 #   --app       The App, as the entry command worked it out. Never from a delivery's arguments.
@@ -20,6 +20,13 @@
 #       the App's, or the one its key already holds, and is skipped when none is free. A
 #       redeploy keeps the Environment's Slot, URL and volumes, and a failed one leaves it
 #       stopped.
+#
+#       The Dev Environment, dev, is checked and pulled before anything stops, so a bad template
+#       or image reference leaves it running as it was. Then Dev stops, a Volume Snapshot is taken
+#       of every named volume, and the new version starts. When it doesn't, Recovery brings Dev
+#       down, puts the snapshot back and starts the previous version, and the reason says whether
+#       that worked. The new version is recorded as current, and the one before it as previous,
+#       for Rollback.
 #
 #   destroy feature-<key>
 #       Removes the Feature Environment, its volumes and its Service mapping, and frees its
@@ -55,8 +62,9 @@
 # State, all root-only, under /srv/deadlift:
 #   lock                            The Server's lock: one operation at a time.
 #   apps/<app>/app.conf             The App's entry in the Server registry, written by
-#                                   `deadlift app add`: port_base=<port> and slots=<n>, and
-#                                   the per-container limits memory=<size, e.g. 512m>,
+#                                   `deadlift app add`: port_base=<port>, slots=<n>,
+#                                   snapshots=<n>, the Volume Snapshots to keep (3 if unset),
+#                                   and the per-container limits memory=<size, e.g. 512m>,
 #                                   cpus=<n> and pids=<n> (template.sh has the defaults).
 #   apps/<app>/dev.env, feature.env The App's secrets files, written by `deadlift app secrets`.
 #   apps/<app>/environments/<env>/  An Environment: its template (compose.yaml), the variables
@@ -64,6 +72,15 @@
 #                                   file, and vars.env, deadlift's), its DEADLIFT_SECRET (secret),
 #                                   deadlift's override (override.json) and, for Feature, the
 #                                   Slot it holds (slot). Destroying it removes the directory.
+#     dev/                          For Dev, these are its current version, which also has its
+#                                   image references (images: <name>=<ref> per line) and the
+#                                   name of the Volume Snapshot taken just before it was first
+#                                   deployed (snapshot), which --discard-newer-data goes back to.
+#     dev/previous/                 The version before the current one, in the same files, which
+#                                   Rollback starts. Absent until Dev has had two versions.
+#     dev/snapshots/<name>/         A Volume Snapshot: <volume>.tar for each of Dev's named
+#                                   volumes, taken with its containers stopped. The newest are
+#                                   kept, and the one the current version records.
 #   deliveries/                     Deliveries while their operation runs.
 #
 # Every reason line starts with `deadlift: `, and the last one says what happened. Outputs for
@@ -81,6 +98,8 @@ state=${DEADLIFT_STATE_DIR:-/srv/deadlift}
 lib=$(dirname "${BASH_SOURCE[0]}")
 # How long the routed service has to report healthy.
 health_timeout=300
+# Takes Volume Snapshots and puts them back: only its tar, sh and find are used.
+snapshot_image=alpine:3.20@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc
 # The --image arguments: each image's reference, by name.
 declare -A images=()
 
@@ -127,18 +146,19 @@ take_lock() {
   fi
 }
 
-# Reads the App's entry in the Server registry into port_base and slots.
+# Reads the App's entry in the Server registry into port_base, slots and snapshots_kept.
 read_app() {
   local conf=$state/apps/$app/app.conf key value
-  port_base='' slots=''
+  port_base='' slots='' snapshots_kept=3
   [[ -f $conf ]] || refuse "$app isn't an App on this Server"
   while IFS='=' read -r key value; do
     case $key in
       port_base) port_base=$value ;;
       slots) slots=$value ;;
+      snapshots) snapshots_kept=$value ;;
     esac
   done <"$conf"
-  [[ $port_base =~ ^[0-9]+$ && $slots =~ ^[1-9]$ ]] ||
+  [[ $port_base =~ ^[0-9]+$ && $slots =~ ^[1-9]$ && $snapshots_kept =~ ^[1-9][0-9]*$ ]] ||
     fail "$app's entry in the Server registry is broken. Re-run \`deadlift app add $app\`"
 }
 
@@ -356,6 +376,207 @@ destroy_feature() {
   echo "deadlift: destroyed $env with its volumes${slot:+, freeing Slot $slot}" >&2
 }
 
+# Starts the Environment whose files are in $1, which routes to the service $2, and waits for
+# that service to be healthy. Returns non-zero when it doesn't start, with the reason as the last
+# line of $delivery/up.log.
+start_environment() {
+  local dir=$1 routed=$2 log=$delivery/up.log
+  compose "$dir" up --detach --pull never --remove-orphans 2>&1 | tee "$log" >&2 &&
+    compose "$dir" up --detach --pull never --no-recreate --no-deps --wait \
+      --wait-timeout "$health_timeout" "$routed" 2>&1 | tee "$log" >&2
+}
+
+# Starts the version of an Environment whose files are in $1 again, routing to the service its
+# own template names. Returns non-zero when it doesn't start.
+restart_version() {
+  local routed_there
+  [[ -f $1/compose.yaml ]] || return 1
+  routed_there=$(compose "$1" config --format json 2>/dev/null |
+    jq -er '."x-deadlift".route | split(":")[0]') || return 1
+  start_environment "$1" "$routed_there"
+}
+
+# Stops, or with `rm --force` removes, every container of $project, whatever template started it.
+project_containers() {
+  local action=$1 ids
+  shift
+  mapfile -t ids < <(docker container ls --all --quiet --filter "label=com.docker.compose.project=$project")
+  if ((${#ids[@]})); then docker container "$action" "$@" "${ids[@]}" >/dev/null; fi
+}
+
+# The named volumes of $project, by their full names.
+project_volumes() {
+  docker volume ls --quiet --filter "label=com.docker.compose.project=$project"
+}
+
+# Pulls the image Volume Snapshots are taken and put back with, if the Server doesn't have it.
+pull_snapshot_image() {
+  if docker image inspect "$snapshot_image" >/dev/null 2>&1; then return; fi
+  echo "Pulling $snapshot_image"
+  docker pull --quiet "$snapshot_image" >/dev/null 2>"$delivery/pull.err" ||
+    fail "couldn't pull $snapshot_image, which takes Volume Snapshots: $(tail -n 1 "$delivery/pull.err"). Nothing was changed"
+}
+
+# Takes a Volume Snapshot of every named volume of $project, whose containers must be stopped:
+# each volume's contents as <volume>.tar, in a directory of its own under $snapshots. Sets
+# snapshot to its name. One that couldn't be finished is removed, so it never counts.
+#
+# The tars stream through the helper's stdout and stdin, with no host directory mounted, so it
+# runs in the same user namespace as the App's containers on a Server with userns-remap: it reads
+# and writes the volumes as their root does, and owners come back as they were.
+take_snapshot() {
+  local volume volumes partial n=1
+  # Listed first: a snapshot missing a volume because Docker didn't answer would make Recovery
+  # remove that volume.
+  volumes=$(project_volumes) || return 1
+  snapshot=$(date -u +%Y%m%dT%H%M%SZ)
+  while [[ -e $snapshots/$snapshot ]]; do snapshot=$(date -u +%Y%m%dT%H%M%SZ)-$((++n)); done
+  partial=$snapshots/$snapshot.partial
+  mkdir -p "$partial"
+  while IFS= read -r volume; do
+    [[ -n $volume ]] || continue
+    if ! docker run --rm --network none --volume "$volume:/volume:ro" "$snapshot_image" \
+      tar -cf - -C /volume . >"$partial/$volume.tar"; then
+      rm -rf "$partial"
+      return 1
+    fi
+  done <<<"$volumes"
+  mv "$partial" "$snapshots/$snapshot"
+}
+
+# Puts the Volume Snapshot $1 back into $project's named volumes, whose containers must be
+# removed. Each volume it holds gets exactly its contents back, and a volume made since, which it
+# doesn't hold, is removed.
+restore_snapshot() {
+  local from=$snapshots/$1 volume volumes file
+  [[ -n $1 && -d $from ]] || return 1
+  volumes=$(project_volumes) || return 1
+  while IFS= read -r volume; do
+    [[ -n $volume && ! -f $from/$volume.tar ]] || continue
+    docker volume rm "$volume" >/dev/null || return 1
+  done <<<"$volumes"
+  for file in "$from"/*.tar; do
+    [[ -f $file ]] || continue
+    volume=$(basename "$file" .tar)
+    docker run --rm --interactive --network none --volume "$volume:/volume" "$snapshot_image" \
+      sh -c 'find /volume -mindepth 1 -delete && tar -xf - -C /volume' <"$file" >/dev/null || return 1
+  done
+}
+
+# Keeps the App's configured number of Volume Snapshots, the newest, and also the one Dev's
+# current version was first deployed over, which Rollback's --discard-newer-data goes back to.
+prune_snapshots() {
+  local needed='' ids id
+  if [[ -f $dir/snapshot ]]; then needed=$(<"$dir/snapshot"); fi
+  mapfile -t ids < <(find "$snapshots" -mindepth 1 -maxdepth 1 -type d ! -name '*.partial' -printf '%f\n' | sort -r)
+  for id in "${ids[@]:snapshots_kept}"; do
+    if [[ $id != "$needed" ]]; then rm -rf "${snapshots:?}/$id"; fi
+  done
+}
+
+# The files that make up a version of the Dev Environment, in its directory: the template
+# (compose.yaml), the variables and deadlift's override it runs with (secrets.env, vars.env,
+# override.json), its image references (images, <name>=<ref> per line), and the name of the Volume
+# Snapshot taken just before it was first deployed (snapshot). DEADLIFT_SECRET (secret) belongs
+# to the Environment, not to a version.
+version_files=(compose.yaml secrets.env vars.env override.json images snapshot)
+
+# Records the version in $next, now running, as Dev's current version. The current version
+# before it becomes the previous one, which Rollback goes back to. Deploying the current version
+# again, the same template and image references, leaves the previous one as it was.
+record_version() {
+  local file
+  if [[ -f $dir/compose.yaml ]] && cmp -s "$dir/compose.yaml" "$next/compose.yaml" &&
+    cmp -s "$dir/images" "$next/images"; then
+    cp "$dir/snapshot" "$next/snapshot"
+  else
+    echo "$snapshot" >"$next/snapshot"
+    if [[ -f $dir/compose.yaml ]]; then
+      rm -rf "$dir/previous.new"
+      mkdir "$dir/previous.new"
+      for file in "${version_files[@]}"; do
+        if [[ -f $dir/$file ]]; then cp "$dir/$file" "$dir/previous.new/"; fi
+      done
+      rm -rf "$dir/previous"
+      mv "$dir/previous.new" "$dir/previous"
+    fi
+  fi
+  for file in "${version_files[@]}" secret; do
+    cp "$next/$file" "$dir/$file.new"
+    mv "$dir/$file.new" "$dir/$file"
+  done
+}
+
+# Recovery, after the new version in $next didn't start, for the reason $1: brings Dev down, puts
+# back the Volume Snapshot taken before this deploy, and starts the current version again. Always
+# fails, saying whether Recovery succeeded and what's left running.
+recover_dev() {
+  local why="dev didn't start on its new version: $1"
+  echo "Recovery: putting back dev's Volume Snapshot and its previous version"
+  project_containers rm --force || true
+  if ! restore_snapshot "$snapshot"; then
+    fail "$why. Recovery failed: it couldn't put back the Volume Snapshot taken before this deploy, $snapshot, so Dev is stopped"
+  fi
+  if [[ ! -f $dir/compose.yaml ]]; then
+    fail "$why. Recovery put back Dev's data as it was before this deploy, and there was no previous version to start, so Dev is stopped"
+  fi
+  if ! restart_version "$dir"; then
+    project_containers stop || true
+    fail "$why. Recovery failed: it put back Dev's data as it was before this deploy, but the previous version didn't start either ($(tail -n 1 "$delivery/up.log" 2>/dev/null)), so Dev is stopped"
+  fi
+  fail "$why. Recovery succeeded: Dev is back on its previous version, with its data as it was before this deploy, at $url"
+}
+
+# Deploys the delivered template to the Dev Environment, at the base of the App's ports and the
+# root of its Service. Nothing stops until the template is checked and every image is pulled.
+# Then Dev stops, a Volume Snapshot is taken, and the new version starts. If it doesn't, Recovery
+# puts back the snapshot and the previous version.
+deploy_dev() {
+  local dir=$state/apps/$app/environments/dev next=$delivery/next name url suffix port
+  local snapshots=$state/apps/$app/environments/dev/snapshots snapshot
+  [[ -f $delivery/compose.yaml ]] || refuse "the delivery has no compose.yaml to deploy"
+  project=deadlift-$app-dev
+  port=$port_base
+
+  mkdir "$next"
+  cp "$delivery/compose.yaml" "$next/compose.yaml"
+  for name in "${!images[@]}"; do echo "$name=${images[$name]}"; done | sort >"$next/images"
+  read_tailnet_suffix
+  url=https://$app.$suffix/
+  write_variables "$next" "$url"
+  check_template "$next"
+  write_override "$next" "$port"
+  pull_images
+  pull_snapshot_image
+
+  echo "Stopping dev for a Volume Snapshot"
+  mkdir -p "$dir" "$snapshots"
+  if ! project_containers stop; then
+    restart_version "$dir" ||
+      fail "couldn't stop dev for a Volume Snapshot, and its current version didn't start again, so Dev is stopped. Its new version wasn't started"
+    fail "couldn't stop dev for a Volume Snapshot, so its new version wasn't started. Dev is up on its current version, at $url"
+  fi
+  if ! take_snapshot; then
+    restart_version "$dir" ||
+      fail "couldn't take a Volume Snapshot of dev, so its new version wasn't started, and Dev is stopped"
+    fail "couldn't take a Volume Snapshot of dev, so its new version wasn't started. Dev is up on its current version, at $url"
+  fi
+
+  echo "Starting dev"
+  if ! start_environment "$next" "$routed"; then
+    recover_dev "$(tail -n 1 "$delivery/up.log")"
+  fi
+  record_version
+  prune_snapshots
+  if ! tailscale serve --service="svc:$app" --https=443 --bg "http://127.0.0.1:$port" >&2; then
+    fail "dev is up on its new version, but Tailscale Serve couldn't map it at $url"
+  fi
+
+  output environment dev
+  output url "$url"
+  echo "deadlift: deployed dev, which is up at $url" >&2
+}
+
 op_deploy() {
   env=${1:-}
   shift || true
@@ -373,12 +594,12 @@ op_deploy() {
   done
   case $env in
     feature-*) check_feature_key ;;
-    dev) refuse "deploying the Dev Environment isn't supported by this Server yet" ;;
+    dev) ;;
     *) usage "'$env' isn't an Environment: dev or feature-<key>" ;;
   esac
   read_app
   take_lock
-  deploy_feature
+  if [[ $env == dev ]]; then deploy_dev; else deploy_feature; fi
 }
 
 op_destroy() {
