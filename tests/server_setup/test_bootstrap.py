@@ -3,7 +3,7 @@ this machine over real SSH as root, with only `tailscale` faked, so it reconfigu
 machine's Docker and firewall for good. It refuses to start anywhere but a throwaway machine: the
 GitHub-hosted ubuntu-24.04 runner in CI, or a Multipass VM (test/server-setup/multipass.sh).
 
-In CI, the delivery tests then run on the Server this leaves behind (test/isolation.test.ts).
+In CI, the delivery tests then run on the Server this leaves behind (tests/delivery).
 """
 
 import re

@@ -20,8 +20,8 @@ from tests.support.throwaway import why_not_throwaway
 
 @pytest.fixture(scope="module", autouse=True)
 def maintainer() -> Generator[Maintainer]:
-    """Per test file, as each TypeScript file's beforeAll did: refuses a machine that isn't a
-    throwaway one, then gives the maintainer an SSH key of their own that root here accepts."""
+    """Per test file: refuses a machine that isn't a throwaway one, then gives the maintainer
+    an SSH key of their own that root here accepts."""
     why = why_not_throwaway()
     if why:
         pytest.fail(f"Refusing to run the server-setup tests: {why}.", pytrace=False)

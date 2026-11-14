@@ -1,5 +1,4 @@
-"""Matchers for assertions that check part of a value, as vitest's `expect.objectContaining`
-and `toMatchObject` do."""
+"""Matchers for assertions that check part of a value, such as only some of a mapping's keys."""
 
 from collections.abc import Mapping
 from typing import override

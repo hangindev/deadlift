@@ -27,11 +27,11 @@ package = false
 testpaths = ["tests"]
 pythonpath = ["src", "."]
 addopts = ["--strict-markers", "--import-mode=importlib"]
-norecursedirs = [".claude", "node_modules", ".venv", "tests/delivery", "tests/server_setup"]
+norecursedirs = [".claude", ".venv", "tests/delivery", "tests/server_setup"]
 
 [tool.pyright]
 include = ["src", "tests", "actions", "bin"]
-exclude = ["**/node_modules", "**/.venv", ".claude"]
+exclude = ["**/.venv", ".claude"]
 extraPaths = ["src"]
 pythonVersion = "3.12"
 typeCheckingMode = "strict"
@@ -41,7 +41,7 @@ venv = ".venv"
 [tool.ruff]
 line-length = 100
 target-version = "py312"
-extend-exclude = [".claude", "node_modules"]
+extend-exclude = [".claude"]
 
 [tool.ruff.lint]
 select = [
