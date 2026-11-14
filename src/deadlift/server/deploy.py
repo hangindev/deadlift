@@ -28,6 +28,8 @@ Operations:
       held by keys no longer kept are free for it. It sweeps only once the template is checked
       and the images pulled, and not at all when it's skipped.
 
+      Every image the template names is pulled with the delivery's token, even one the Server
+      has, so an App runs another App's image only if the registry gives it to its own CI too.
       The Dev Environment, dev, is checked and pulled before anything stops, so a bad template
       or image reference leaves it running as it was. Then Dev stops, a Volume Snapshot is taken
       of every named volume, and the new version starts. When it doesn't, Recovery brings Dev
@@ -585,9 +587,16 @@ class App(Server):
         )
         (directory / "override.json").write_text(document)
 
-    def pull_images(self) -> None:
-        """Pulls every image the template names that the Server doesn't have yet, with the
-        job's registry token. Fails, changing nothing, when one can't be pulled."""
+    def pull_images(self, *, again: bool) -> None:
+        """Pulls the images the template names, with the job's registry token. Fails, changing
+        nothing, when one can't be pulled.
+
+        With ``again``, as for a deploy, every image is pulled, even one the Server has: an
+        image another App's deploy left on the Server, such as its private one, runs only if
+        the registry gives it to this delivery's token too (ADR 0001). Pulling one the Server has
+        only checks it with the registry. Without, as for Rollback, only those the Server no
+        longer has are pulled: the previous version's images were pulled when it was deployed.
+        """
         docker_config = self.delivery / "docker"
         docker_config.mkdir(parents=True, exist_ok=True)
         # In a config of its own, inside the delivery, so it's removed with it. GHCR checks only
@@ -608,9 +617,12 @@ class App(Server):
                     refs.add(jq_text(image))
         pull_env = self.env.with_vars({"DOCKER_CONFIG": str(docker_config)})
         for ref in sorted(refs):
-            if self.docker("image", "inspect", ref, stdout=Stream.DEVNULL, stderr=Stream.DEVNULL)[
-                0
-            ]:
+            if (
+                not again
+                and self.docker(
+                    "image", "inspect", ref, stdout=Stream.DEVNULL, stderr=Stream.DEVNULL
+                )[0]
+            ):
                 continue
             say(f"Pulling {ref}")
             done = run(
@@ -696,7 +708,7 @@ class App(Server):
         self.write_variables(nxt, url)
         self.check_template(nxt)
         self.write_override(nxt, port)
-        self.pull_images()
+        self.pull_images(again=True)
         # Only now, so a template refused or an image that can't be pulled sweeps nothing.
         if self.keep_given:
             self.sweep_before_deploy(slot)
@@ -1175,7 +1187,7 @@ class App(Server):
         self.write_variables(nxt, url)
         self.check_template(nxt)
         self.write_override(nxt, port)
-        self.pull_images()
+        self.pull_images(again=True)
         self.pull_snapshot_image()
 
         say("Stopping dev for a Volume Snapshot")
@@ -1416,7 +1428,7 @@ class App(Server):
                 "changed"
             )
         self.config = cast(dict[str, object], json.loads(done.stdout))
-        self.pull_images()
+        self.pull_images(again=False)
         before = ""
         if self.discard:
             if (dev / "snapshot").is_file():

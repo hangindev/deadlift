@@ -20,6 +20,7 @@ from tests.support.harness import (
     Result,
     ServeMapping,
     Symlink,
+    docker,
     example_template,
     get,
     matches,
@@ -230,6 +231,25 @@ class TestTheAppIsWorkedOutFromSudoUser:
         assert get(server.slot_port("a", 1), "/version") == "1"
         assert server.serve_mappings() == before
         assert server.containers(b) == ""
+
+    def test_an_image_another_apps_deploy_left_on_the_server_runs_only_if_the_registry_gives_it(
+        self, harness: Harness
+    ) -> None:
+        server = harness.server()
+        a, b = server.apps["a"].name, server.apps["b"].name
+        assert server.deliver(
+            b, ["deploy", "dev", "--image", f"web={harness.image()}"]
+        ).outcome == ("done")
+        # b's private image: on the Server since b's deploy pulled it with b's token, and not
+        # one the registry gives a's.
+        private = f"{harness.repository}:{b}-private"
+        docker("image", "tag", harness.image(), private)
+
+        result = server.deliver(a, ["deploy", "feature-1", "--image", f"web={private}"])
+
+        assert result.code == 1, result.output
+        assert matches(rf"^deadlift: couldn't pull {re.escape(private)}", result.reason)
+        assert server.containers(a) == ""
 
     @pytest.mark.parametrize("user", ["deadlift-nobody", "root"])
     def test_a_user_that_isnt_an_apps_deploy_user_is_refused_exit_2(
