@@ -340,9 +340,14 @@ export async function startHarness() {
       await writeFile(outputFile, "");
       const summaryFile = join(job, "step-summary");
       await writeFile(summaryFile, "");
+      // As the deliver action runs it.
       const result = await collect(
-        join(repo, "actions/deliver/deliver.sh"),
-        ["--server", "server.tailtest.ts.net", "--app", app, ...args],
+        "python3",
+        [
+          "-I",
+          join(repo, "actions/deliver/deliver.py"),
+          ...["--server", "server.tailtest.ts.net", "--app", app, ...args],
+        ],
         {
           cwd: job,
           env: clientEnv({

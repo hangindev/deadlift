@@ -2,7 +2,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { fakeGitHub, type GitHubState } from "./support/fake-github.ts";
 
-const script = "actions/superseded/superseded.sh";
+const script = "actions/superseded/superseded.py";
 const repo = "acme/shop";
 
 // A history on main: c1 <- c2 <- c3.
