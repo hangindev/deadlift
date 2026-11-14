@@ -1,8 +1,8 @@
 """A fake GitHub runner for testing deadlift's actions through their action.yml.
 
 A job's checkout, and the runner's tools faked on PATH ahead of any real ones
-(test/fakes/runner). Its `ssh` stands in for the Server, keeping what each delivery sent and
-answering as the test says. Nothing reaches the network, the tailnet or this machine's Docker,
+(tests/support/fakes/runner). Its `ssh` stands in for the Server, keeping what each delivery sent
+and answering as the test says. Nothing reaches the network, the tailnet or this machine's Docker,
 and nothing runs as root.
 """
 
@@ -16,7 +16,7 @@ from typing import Any
 
 from tests.support.composite_action import REPO_ROOT, ActionRun, UsesStub, run_action
 
-FAKES = REPO_ROOT / "test/fakes/runner"
+FAKES = REPO_ROOT / "tests/support/fakes/runner"
 
 
 @dataclass(frozen=True)

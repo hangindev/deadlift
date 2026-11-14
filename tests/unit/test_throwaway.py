@@ -12,7 +12,7 @@ def test_lets_a_github_hosted_ubuntu_24_04_runner_through() -> None:
     assert why_not_throwaway(RUNNER, marker_exists=False) is None
 
 
-def test_lets_a_multipass_vm_marked_by_test_server_setup_multipass_sh_through() -> None:
+def test_lets_a_multipass_vm_marked_by_multipass_sh_through() -> None:
     assert why_not_throwaway({}, marker_exists=True) is None
 
 

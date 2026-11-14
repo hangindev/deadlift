@@ -28,9 +28,9 @@ import pytest
 from tests.support.harness import Harness, Server, docker
 from tests.support.network import PROBE, external_ipv4_addresses, reach
 
-OUTSIDE = Path(__file__).resolve().parents[2] / "test" / "support" / "outside.sh"
+OUTSIDE = Path(__file__).resolve().parents[1] / "support" / "outside.sh"
 
-# The file test/server-setup/multipass.sh creates in the VMs it launches for the server-setup
+# The file tests/server_setup/multipass.sh creates in the VMs it launches for the server-setup
 # tests.
 THROWAWAY_MARKER = Path("/etc/deadlift-throwaway-machine")
 
@@ -41,7 +41,7 @@ def why_not_throwaway(
     """Why this machine may not be reconfigured by tests, or None when it may: bootstrapped as a
     Server, its Docker restarted with userns-remap, its firewall and network changed. Only a
     machine thrown away after the run may: a GitHub-hosted Ubuntu 24.04 runner, or a Multipass
-    VM that test/server-setup/multipass.sh launched and marked. Never a developer's machine,
+    VM that tests/server_setup/multipass.sh launched and marked. Never a developer's machine,
     even one with passwordless sudo."""
     github_hosted = (
         env.get("GITHUB_ACTIONS") == "true"
@@ -53,7 +53,7 @@ def why_not_throwaway(
         return None
     return (
         "this isn't a throwaway machine (a GitHub-hosted ubuntu-24.04 runner, or a Multipass VM "
-        f"marked with {THROWAWAY_MARKER} by test/server-setup/multipass.sh), and these tests "
+        f"marked with {THROWAWAY_MARKER} by tests/server_setup/multipass.sh), and these tests "
         "reconfigure the machine's Docker, firewall and network"
     )
 

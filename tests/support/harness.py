@@ -32,7 +32,7 @@ from types import FrameType
 from typing import Literal, cast
 
 REPO = Path(__file__).resolve().parents[2]
-FAKES = REPO / "test" / "fakes"
+FAKES = REPO / "tests" / "support" / "fakes" / "delivery"
 EXAMPLE_APP = REPO / "tests" / "delivery" / "example_app"
 REGISTRY_IMAGE = (
     "registry:3@sha256:38907510915c3f1604c7e83d6ab602ab3020d092f73bdaed8696773693ff768c"

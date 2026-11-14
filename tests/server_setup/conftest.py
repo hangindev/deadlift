@@ -29,7 +29,7 @@ def maintainer() -> Generator[Maintainer]:
     work = Path(tempfile.mkdtemp(prefix=f"deadlift-test-{hex_}-"))
     try:
         ok("ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", work / "key")
-        ok("sudo", "bash", REPO / "test/server-setup/prepare.sh", work / "key.pub")
+        ok("sudo", "bash", REPO / "tests/server_setup/prepare.sh", work / "key.pub")
         (work / "bin").mkdir()
         ssh = work / "bin/ssh"
         ssh.write_text(

@@ -26,19 +26,18 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      # For test/actionlint.sh, which writes the actions out as workflows with PyYAML.
+      # For tests/actionlint.sh, which writes the actions out as workflows with PyYAML.
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           version: 0.11.26
-      # The runner image ships shellcheck. It checks what's still Bash: the files with a shell's
-      # shebang, so each one ported to Python drops out by itself.
+      # The runner image ships shellcheck. Everything deadlift ships is Python (ADR 0004); what's
+      # left in shell is the tests' fakes and scripts, the files with a shell's shebang.
       - run: >-
-          find bin cli actions test/*.sh test/fakes test/support test/server-setup -type f
-          ! -name '*.yml' ! -name '*.ts' ! -name '*.hujson' ! -name '*.py' -print0 |
+          find bin actions tests -type f ! -name '*.py' ! -path '*/__pycache__/*' -print0 |
           xargs -0 grep -lZ -E '^#!(/usr/bin/env (ba)?sh|/bin/(ba)?sh)' | xargs -0 -r shellcheck
       # The workflows, the composite actions written out as workflows, and the starter workflows
       # as `deadlift init` writes them.
-      - run: test/actionlint.sh
+      - run: tests/actionlint.sh
 
   # Lints and type-checks deadlift's Python (ADR 0004), on the runner's system python3, which is
   # Ubuntu 24.04's, as on a Server.

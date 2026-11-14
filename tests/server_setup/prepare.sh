@@ -6,7 +6,7 @@
 #
 #   prepare.sh <public key file>
 #
-# Only for a throwaway machine (see test/support/throwaway.ts): it installs and starts sshd and
+# Only for a throwaway machine (see tests/support/throwaway.py): it installs and starts sshd and
 # lets the key log in as root.
 set -euo pipefail
 
@@ -33,7 +33,7 @@ done
 
 # The delivery tests' fake, which answers what the deploy script and app.sh ask of Tailscale on a
 # Server. Installed over an earlier stand-in, never over a real tailscale.
-fake=$(dirname "${BASH_SOURCE[0]}")/../fakes/tailscale
+fake=$(dirname "${BASH_SOURCE[0]}")/../support/fakes/delivery/tailscale
 if ! command -v tailscale >/dev/null || grep -qF 'fake tailscale:' /usr/local/bin/tailscale 2>/dev/null; then
   if ! cmp -s "$fake" /usr/local/bin/tailscale; then install -m 0755 "$fake" /usr/local/bin/tailscale; fi
 fi
