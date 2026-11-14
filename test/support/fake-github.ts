@@ -99,7 +99,9 @@ export function fakeGitHub(initial: GitHubState) {
     run(script: string, args: string[], env: Record<string, string> = {}): Run {
       const outputFile = join(dir, "github-output");
       writeFileSync(outputFile, "");
-      const result = spawnSync("bash", [join(repoRoot, script), ...args], {
+      // As the actions run their scripts: Python ones as `python3 -I`.
+      const command = script.endsWith(".py") ? ["python3", "-I"] : ["bash"];
+      const result = spawnSync(command[0], [...command.slice(1), join(repoRoot, script), ...args], {
         encoding: "utf8",
         env: {
           PATH: `${dir}:${process.env.PATH}`,

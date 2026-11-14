@@ -48,5 +48,5 @@ runs:
         REGISTRY_TOKEN: ${{ inputs.token }}
       run: |
         mapfile -t images <<<"$IMAGES"
-        "$GITHUB_ACTION_PATH/build.sh" --repository "$REPOSITORY" --commit "$COMMIT" \
+        python3 -I "$GITHUB_ACTION_PATH/build.py" --repository "$REPOSITORY" --commit "$COMMIT" \
           --platform "$PLATFORM" --source "$SOURCE" -- "${images[@]}"

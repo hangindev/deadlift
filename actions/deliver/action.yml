@@ -110,8 +110,8 @@ runs:
         if ((${#keep[@]})); then args+=(--keep "$(IFS=, && echo "${keep[*]}")"); fi
         if [[ $KEEP_NONE == true ]]; then args+=(--keep-none); fi
         if [[ $DISCARD_NEWER_DATA == true ]]; then args+=(--discard-newer-data); fi
-        "$GITHUB_ACTION_PATH/deliver.sh" "${args[@]}"
+        python3 -I "$GITHUB_ACTION_PATH/deliver.py" "${args[@]}"
     # Also after a failure, so the job can join again, as the App's CI or anything else.
     - if: always()
       shell: bash
-      run: '"$GITHUB_ACTION_PATH/leave.sh"'
+      run: python3 -I "$GITHUB_ACTION_PATH/leave.py"
