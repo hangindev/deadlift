@@ -473,7 +473,9 @@ def test_opens_up_an_empty_section_on_one_line_for_an_entry_on_several(tmp_path:
     merged = merge(tmp_path, '{\n\t"ssh": [],\n\t"tests": [ ],\n}\n', entries)
 
     assert merged.status == 0, merged.stderr
-    assert merged.stdout == """{
+    assert (
+        merged.stdout
+        == """{
 	"ssh": [
 		{
 			"action": "accept",
@@ -483,3 +485,4 @@ def test_opens_up_an_empty_section_on_one_line_for_an_entry_on_several(tmp_path:
 	"tests": [ ],
 }
 """
+    )
