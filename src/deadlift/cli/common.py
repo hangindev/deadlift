@@ -73,18 +73,6 @@ def maintainer_env() -> Env:
     return scrubbed_env(keep=tuple(os.environ))
 
 
-def say(text: str = "", *, end: str = "\n") -> None:
-    """Writes ``text`` to stdout at once, ahead of anything a child writes."""
-    sys.stdout.write(text + end)
-    sys.stdout.flush()
-
-
-def tell(text: str) -> None:
-    """Writes the line ``text`` to stderr at once."""
-    sys.stderr.write(text + "\n")
-    sys.stderr.flush()
-
-
 def _bytes_as_given(stream: object) -> None:
     # What deadlift prints is UTF-8, whatever the locale says, and an argument that isn't (such as
     # a file name) goes back out as the bytes it came in as, as Bash printed it.

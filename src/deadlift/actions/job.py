@@ -11,12 +11,11 @@ its builder and ``ssh`` its agent. It's still passed explicitly, through
 import json
 import os
 import re
-import sys
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import NoReturn
 
-from deadlift.core.outcome import Exit, Stop, reason, refuse, run_main
+from deadlift.core.outcome import refuse, refuse_usage
 from deadlift.core.process import Env, scrubbed_env
 
 # A shell's default IFS: how Bash's `read -a` split a line into words.
@@ -59,24 +58,7 @@ def words(text: str) -> list[str]:
 
 def usage(why: str, usage_line: str) -> NoReturn:
     """Refuses a bad command line: the reason, then the ``Usage:`` line, both on stderr."""
-    reason(why)
-    sys.stderr.write(f"Usage: {usage_line}\n")
-    sys.stderr.flush()
-    raise Stop(Exit.REFUSED, None)
-
-
-def run_job(body: Callable[[], int]) -> int:
-    """Like :func:`~deadlift.core.outcome.run_main`, for a body that ends with whatever exit code
-    a child gave it (such as the Server's, through ssh), not only one of deadlift's own."""
-    code: list[int] = []
-    stopped = run_main(lambda: code.append(body()))
-    return code[0] if code else stopped
-
-
-def say(line: str) -> None:
-    """Writes a line to stdout at once, so it stays in order with stderr in a merged log."""
-    sys.stdout.write(f"{line}\n")
-    sys.stdout.flush()
+    refuse_usage(why, f"Usage: {usage_line}")
 
 
 def append(variable: str, lines: Iterable[str]) -> bool:

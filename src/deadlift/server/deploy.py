@@ -144,7 +144,7 @@ from typing import NoReturn, cast
 
 from deadlift.core.lock import server_lock
 from deadlift.core.names import is_app_name, is_image_name
-from deadlift.core.outcome import Exit, Stop, output, reason
+from deadlift.core.outcome import Exit, Stop, output, reason, refuse_usage, run_main, say, tell
 from deadlift.core.process import Env, Stream, Target, run, scrubbed_env, start
 from deadlift.server import template
 from deadlift.server.layout import layout
@@ -177,32 +177,8 @@ _KEY = re.compile(r"[a-z0-9][a-z0-9-]{0,29}")
 _IMAGE_REF = re.compile(r"[a-zA-Z0-9][a-zA-Z0-9._/:@-]*")
 
 
-class _Said(Exception):
-    """Ends the script with ``code``, its reason already given."""
-
-    def __init__(self, code: int) -> None:
-        super().__init__(code)
-        self.code = code
-
-
 def usage(why: str) -> NoReturn:
-    reason(why)
-    sys.stderr.write(USAGE)
-    sys.stderr.flush()
-    raise Stop(Exit.REFUSED, None)
-
-
-def say(text: str) -> None:
-    """A progress line, on stdout."""
-    sys.stdout.write(f"{text}\n")
-    sys.stdout.flush()
-
-
-def tell(text: str) -> None:
-    """A line on stderr, such as a reason that isn't the last."""
-    sys.stdout.flush()
-    sys.stderr.write(f"{text}\n")
-    sys.stderr.flush()
+    refuse_usage(why, USAGE)
 
 
 def repository_of(ref: str) -> str:
@@ -359,7 +335,8 @@ class Server:
             except Stop as stop:
                 if stop.why is not None:
                     reason(stop.why)
-                raise _Said(int(stop.code)) from None
+                # Its reason is given: it ends with the code alone.
+                raise Stop(stop.code, None) from None
             finally:
                 self.prune_quietly()
 
@@ -1790,12 +1767,4 @@ def _main(argv: Sequence[str]) -> None:
 
 def main(argv: Sequence[str]) -> int:
     os.umask(0o077)
-    try:
-        _main(argv)
-    except Stop as stop:
-        if stop.why is not None:
-            reason(stop.why)
-        return int(stop.code)
-    except _Said as said:
-        return said.code
-    return int(Exit.DONE)
+    return run_main(lambda: _main(argv))

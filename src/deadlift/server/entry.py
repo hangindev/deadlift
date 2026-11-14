@@ -39,8 +39,8 @@ from pathlib import Path
 from typing import NoReturn
 
 from deadlift.core.names import is_app_name
-from deadlift.core.outcome import Stop, reason
 from deadlift.core.outcome import refuse as stop_refused
+from deadlift.core.outcome import run_main
 from deadlift.core.process import Stream, run, scrubbed_env
 from deadlift.server.layout import layout
 
@@ -179,9 +179,4 @@ def _deliver(app: str, delivery: Path, lib: Path, rest: Sequence[str]) -> int:
 
 def main(argv: Sequence[str]) -> int:
     os.umask(0o077)
-    try:
-        return _entry(argv)
-    except Stop as stop:
-        if stop.why is not None:
-            reason(stop.why)
-        return int(stop.code)
+    return run_main(lambda: _entry(argv))

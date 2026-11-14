@@ -54,7 +54,7 @@ from typing import NoReturn, cast
 
 import yaml
 
-from deadlift.core.outcome import Exit, Stop, reason, run_main
+from deadlift.core.outcome import Exit, Stop, refuse_usage, run_main
 from deadlift.core.process import Env, Stream, run, scrubbed_env
 from deadlift.server.text import jq_text, last_line, read_settings
 
@@ -79,10 +79,7 @@ def _fail(why: str) -> NoReturn:
 
 
 def _usage(why: str) -> NoReturn:
-    reason(why)
-    sys.stderr.write(USAGE)
-    sys.stderr.flush()
-    raise Stop(Exit.REFUSED, None)
+    refuse_usage(why, USAGE)
 
 
 def child_env() -> Env:

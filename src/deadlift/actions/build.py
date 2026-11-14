@@ -38,7 +38,7 @@ from typing import NoReturn
 
 from deadlift.actions import job
 from deadlift.core.names import image_name_problem, is_repository
-from deadlift.core.outcome import Exit, Stop, fail, reason, refuse, run_main
+from deadlift.core.outcome import Exit, Stop, fail, reason, refuse, run_main, say
 from deadlift.core.process import Env, Stream, run
 
 USAGE = (
@@ -179,7 +179,7 @@ def _push(
         args += ["--label", f"org.opencontainers.image.revision={commit}"]
         if image.target:
             args += ["--target", image.target]
-        job.say(f"Building {image.name} as {ref}")
+        say(f"Building {image.name} as {ref}")
         built = run(
             ["docker", "buildx", "build", *args, image.context], env=env, stdout=Stream.INHERIT
         )

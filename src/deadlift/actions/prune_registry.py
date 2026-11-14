@@ -23,7 +23,7 @@ from typing import cast
 
 from deadlift.actions import job
 from deadlift.core.names import image_name_problem, is_repository
-from deadlift.core.outcome import Exit, fail, reason, refuse, run_main
+from deadlift.core.outcome import Exit, fail, reason, refuse, run_main, say
 from deadlift.core.process import Env, Stream, run
 
 USAGE = "usage: prune-registry.py [--dry-run] (--keep <versions> | --keep-none) <image>..."
@@ -226,7 +226,7 @@ def _prune(argv: Sequence[str]) -> Exit:
     deleted = 0
     for versions_url, id_, what in doomed:
         if dry_run:
-            job.say(f"Would delete {what}")
+            say(f"Would delete {what}")
             deleted += 1
             continue
         if _gh(["--method", "DELETE", f"{versions_url}/{id_}"], env, capture=False) is None:
@@ -235,7 +235,7 @@ def _prune(argv: Sequence[str]) -> Exit:
                 f" are still there. Deleting needs the package to give {repository} the Admin"
                 " role (its settings, Manage Actions access)."
             )
-        job.say(f"Deleted {what}")
+        say(f"Deleted {what}")
         deleted += 1
     listing = ", ".join(images)
     gone = ""

@@ -25,12 +25,10 @@ from deadlift.cli.common import (
     Exited,
     is_server_name,
     maintainer_env,
-    say,
-    tell,
     usage,
 )
 from deadlift.core.names import app_name_problem
-from deadlift.core.outcome import OUTPUT_PREFIX, fail
+from deadlift.core.outcome import OUTPUT_PREFIX, fail, say, tell
 from deadlift.core.process import NOT_FOUND, Stream, Target, run
 
 # Installed by bootstrap: the Server half of the app and server status commands.

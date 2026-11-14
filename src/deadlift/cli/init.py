@@ -26,9 +26,10 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import NoReturn
 
-from deadlift.cli.common import ROOT, Usage, is_server_name, maintainer_env, say
+from deadlift.cli.common import ROOT, Usage, is_server_name, maintainer_env
 from deadlift.cli.common import run_command as _run_command
 from deadlift.core.names import image_name_problem, is_app_name
+from deadlift.core.outcome import say
 from deadlift.core.process import Stream, run
 
 USAGE = "Usage: deadlift init <app> --server <server> [--branch <branch>] [--image <name>]...\n"

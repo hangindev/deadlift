@@ -50,7 +50,15 @@ from typing import NoReturn, cast
 
 from deadlift.core.lock import server_lock
 from deadlift.core.names import app_name_problem
-from deadlift.core.outcome import Exit, Stop, fail, output, reason, refuse, run_main
+from deadlift.core.outcome import (
+    fail,
+    output,
+    reason,
+    refuse,
+    refuse_usage,
+    run_main,
+    say,
+)
 from deadlift.core.process import Completed, Stream, run, scrubbed_env
 from deadlift.server.layout import layout
 
@@ -162,19 +170,11 @@ _ENV = scrubbed_env(keep=("PATH", "HOME", "DOCKER_HOST"))
 
 
 def _usage(why: str) -> NoReturn:
-    reason(why)
-    sys.stderr.write(USAGE)
-    sys.stderr.flush()
-    raise Stop(Exit.REFUSED, None)
+    refuse_usage(why, USAGE)
 
 
 def _refuse(why: str) -> NoReturn:
     refuse(f"{why}. Nothing was changed.")
-
-
-def _say(line: str = "") -> None:
-    sys.stdout.write(f"{line}\n")
-    sys.stdout.flush()
 
 
 def _check_app(name: str) -> None:
@@ -566,7 +566,7 @@ def op_status(args: Sequence[str]) -> None:
     settings = STATE / "settings"
     deploy_limit = _setting_of(settings, "feature_deploy_disk_limit")
     watchdog_limit = _setting_of(settings, "watchdog_disk_limit")
-    _say(
+    say(
         f"Disk: {disk_used()}% used. Feature deploys are skipped over {deploy_limit}%, and the"
         f" watchdog stops Feature Environments over {watchdog_limit}%."
     )
@@ -593,8 +593,8 @@ def op_status(args: Sequence[str]) -> None:
                 ):
                     snaps += 1
         port_base = _setting_of(conf, "port_base")
-        _say()
-        _say(
+        say()
+        say(
             f"{app}: ports {port_base}-{_int(port_base) + 99}, Slots in use: {held} of {slots},"
             f" Volume Snapshots: {snaps}"
         )
@@ -616,13 +616,13 @@ def op_status(args: Sequence[str]) -> None:
             running = len(_docker_lines("container", "ls", "--quiet", *by_project))
             counted = f"{running} of {total} running"
             slotted = f"Slot {slot}" if slot else ""
-            _say(f"  {env:<36} {counted:<22} {slotted:<8} {url}")
+            say(f"  {env:<36} {counted:<22} {slotted:<8} {url}")
             line = True
         if not line:
-            _say("  no Environments")
+            say("  no Environments")
     if apps == 0:
-        _say()
-        _say("No Apps. Add one with `deadlift app add`.")
+        say()
+        say("No Apps. Add one with `deadlift app add`.")
 
 
 def _main(argv: Sequence[str]) -> None:

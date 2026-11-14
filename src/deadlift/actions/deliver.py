@@ -45,7 +45,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from deadlift.actions import job
-from deadlift.core.outcome import REASON_PREFIX, parse_outputs, reason
+from deadlift.core.outcome import REASON_PREFIX, parse_outputs, reason, run_main
 from deadlift.core.process import NOT_FOUND, Stream, shell_status, start
 
 USAGE = "deliver.py --server <host> --app <app> [--compose <file>] <operation> [arguments...]"
@@ -248,4 +248,4 @@ def _deliver(argv: Sequence[str]) -> int:
 
 
 def main(argv: Sequence[str]) -> int:
-    return job.run_job(lambda: _deliver(argv))
+    return run_main(lambda: _deliver(argv))
