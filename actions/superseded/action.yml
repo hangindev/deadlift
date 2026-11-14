@@ -35,4 +35,4 @@ runs:
         GITHUB_REPOSITORY: ${{ inputs.repository }}
         BRANCH: ${{ inputs.branch }}
         COMMIT: ${{ inputs.commit }}
-      run: '"$GITHUB_ACTION_PATH/superseded.sh" "$BRANCH" "$COMMIT"'
+      run: python3 -I "$GITHUB_ACTION_PATH/superseded.py" "$BRANCH" "$COMMIT"
