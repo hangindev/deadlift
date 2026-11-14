@@ -31,6 +31,12 @@ NOT_FOUND = 127
 NOT_EXECUTABLE = 126
 
 
+def shell_status(code: int) -> int:
+    """A child's exit code as a shell reports it: 128 + N for one killed by signal N, which
+    Python gives as -N."""
+    return 128 - code if code < 0 else code
+
+
 @dataclass(frozen=True)
 class Env:
     """A child's whole environment. Make one with :func:`scrubbed_env`."""
@@ -87,7 +93,8 @@ Target = Stream | int | IO[bytes] | IO[str]
 
 @dataclass(frozen=True)
 class Completed:
-    """A child that has exited. ``stdout`` and ``stderr`` are what was captured, else empty."""
+    """A child that has exited, with its exit code as a shell reports it (see
+    :func:`shell_status`). ``stdout`` and ``stderr`` are what was captured, else empty."""
 
     argv: tuple[str, ...]
     code: int
@@ -168,7 +175,9 @@ def run(
         sys.stderr.write(message)
         sys.stderr.flush()
         return Completed(tuple(args), code)
-    return Completed(tuple(args), done.returncode, _decode(done.stdout), _decode(done.stderr))
+    return Completed(
+        tuple(args), shell_status(done.returncode), _decode(done.stdout), _decode(done.stderr)
+    )
 
 
 def start(

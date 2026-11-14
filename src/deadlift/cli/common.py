@@ -73,11 +73,6 @@ def maintainer_env() -> Env:
     return scrubbed_env(keep=tuple(os.environ))
 
 
-def shell_status(code: int) -> int:
-    """A child's exit code as a shell gives it: 128 + N for one killed by signal N."""
-    return 128 - code if code < 0 else code
-
-
 def say(text: str = "", *, end: str = "\n") -> None:
     """Writes ``text`` to stdout at once, ahead of anything a child writes."""
     sys.stdout.write(text + end)

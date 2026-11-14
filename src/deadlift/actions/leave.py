@@ -38,9 +38,7 @@ def _leave() -> int:
         time.sleep(_PAUSE)
     if _running(env):
         fail("tailscaled didn't stop, so this job can't join the tailnet again.")
-    code = run(["sudo", "tailscaled", "--cleanup"], env=env, stdout=Stream.INHERIT).code
-    # As a shell reports a child killed by a signal.
-    return 128 - code if code < 0 else code
+    return run(["sudo", "tailscaled", "--cleanup"], env=env, stdout=Stream.INHERIT).code
 
 
 def main(argv: Sequence[str]) -> int:

@@ -46,7 +46,7 @@ from pathlib import Path
 
 from deadlift.actions import job
 from deadlift.core.outcome import REASON_PREFIX, parse_outputs, reason
-from deadlift.core.process import NOT_FOUND, Stream, start
+from deadlift.core.process import NOT_FOUND, Stream, shell_status, start
 
 USAGE = "deliver.py --server <host> --app <app> [--compose <file>] <operation> [arguments...]"
 
@@ -163,10 +163,8 @@ def _send(work: Path, members: list[str], destination: str, command: str) -> tup
             log += chunk
             sys.stdout.buffer.write(chunk)
             sys.stdout.buffer.flush()
-    code = ssh.wait()
+    status = shell_status(ssh.wait())
     tar.wait()
-    # As a shell reports a child killed by a signal.
-    status = 128 - code if code < 0 else code
     return status, log.decode("utf-8", errors="surrogateescape")
 
 

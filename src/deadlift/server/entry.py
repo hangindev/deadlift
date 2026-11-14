@@ -174,8 +174,7 @@ def _deliver(app: str, delivery: Path, lib: Path, rest: Sequence[str]) -> int:
         env=scrubbed_env(keep=DEPLOY_ENV),
         stdout=Stream.INHERIT,
     )
-    # A deploy script killed by a signal exits as a shell reports it.
-    return done.code if done.code >= 0 else 128 - done.code
+    return done.code
 
 
 def main(argv: Sequence[str]) -> int:

@@ -26,7 +26,6 @@ from deadlift.cli.common import (
     is_server_name,
     maintainer_env,
     say,
-    shell_status,
     tell,
     usage,
 )
@@ -110,7 +109,7 @@ def on_server(server: str, args: Sequence[str], *, stdin: Target = Stream.DEVNUL
             outputs.append(line)
         else:
             say(line)
-    status = shell_status(done.code)
+    status = done.code
     if status == SSH_UNREACHABLE:
         fail(f"couldn't reach {server} over SSH as root, so nothing was changed.")
     if status == NOT_FOUND:
