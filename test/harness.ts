@@ -511,7 +511,7 @@ export async function startHarness() {
   /** Removes everything this run made. */
   async function remove() {
     await removeServers();
-    await docker("rm", "--force", `${prefix}-registry`).catch(() => "");
+    await docker("rm", "--force", "--volumes", `${prefix}-registry`).catch(() => "");
     const refs = await docker("image", "ls", "--format", "{{.Repository}}:{{.Tag}}", repository);
     if (refs) await docker("image", "rm", "--force", ...refs.split("\n")).catch(() => "");
     await rm(root, { recursive: true, force: true });

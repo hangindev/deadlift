@@ -68,6 +68,20 @@ LAUNCHERS: tuple[Launcher, ...] = (
         "deadlift.server.template",
         "deadlift's template check: what an App's Compose template may hold (ADR 0001).",
     ),
+    Launcher(
+        "lib",
+        "app.sh",
+        "deadlift.server.app",
+        "deadlift's App administration on a Server: the Server half of `deadlift app` and"
+        " `server status`.",
+    ),
+    Launcher(
+        "lib",
+        "firewall.sh",
+        "deadlift.server.firewall",
+        "deadlift's firewall for containers (ADR 0001), run by bootstrap and"
+        " deadlift-firewall.service.",
+    ),
 )
 
 
