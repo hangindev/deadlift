@@ -25,7 +25,7 @@ package = false
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["src"]
+pythonpath = ["src", "."]
 addopts = ["--strict-markers", "--import-mode=importlib"]
 norecursedirs = [".claude", "node_modules", ".venv"]
 
