@@ -1,0 +1,117 @@
+name: CI
+
+on:
+  push:
+
+permissions:
+  contents: read
+
+# Naming the shell turns on pipefail, so a failure in a pipeline fails the step.
+defaults:
+  run:
+    shell: bash
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Lints the workflows and actions, and what's still shell: the tests' fakes and scripts.
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      UV_PYTHON: /usr/bin/python3
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # For tests/actionlint.sh, which writes the actions out as workflows with PyYAML.
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: 0.11.26
+      # The runner image ships shellcheck. Everything deadlift ships is Python (ADR 0004); what's
+      # left in shell is the tests' fakes and scripts, the files with a shell's shebang.
+      - run: >-
+          find bin actions tests -type f ! -name '*.py' ! -path '*/__pycache__/*' -print0 |
+          xargs -0 grep -lZ -E '^#!(/usr/bin/env (ba)?sh|/bin/(ba)?sh)' | xargs -0 -r shellcheck
+      # The workflows, the composite actions written out as workflows, and the starter workflows
+      # as `deadlift init` writes them.
+      - run: tests/actionlint.sh
+
+  # Lints and type-checks deadlift's Python (ADR 0004), on the runner's system python3, which is
+  # Ubuntu 24.04's, as on a Server.
+  python-check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      UV_PYTHON: /usr/bin/python3
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: 0.11.26
+      - run: uv sync --locked
+      - run: uv run ruff check
+      - run: uv run ruff format --check
+      - run: uv run pyright
+
+  # deadlift's tests, but for the delivery and server-setup tests, which the jobs below run.
+  python-tests:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      UV_PYTHON: /usr/bin/python3
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: 0.11.26
+      - run: uv sync --locked
+      - run: uv run pytest
+
+  # The delivery tests: deliveries end to end, through the deliver client script, the entry
+  # command and the installed deploy script, against this runner's Docker.
+  delivery-tests:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      UV_PYTHON: /usr/bin/python3
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: 0.11.26
+      - run: uv sync --locked
+      - run: uv run pytest tests/delivery -rs
+
+  # The server-setup tests: bootstrap this runner into a Server, for real, with only tailscale
+  # faked. Then the delivery tests run on that Server, which proves the firewall and userns-remap
+  # hold for an App's containers.
+  server-setup-tests:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      UV_PYTHON: /usr/bin/python3
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: 0.11.26
+      - run: uv sync --locked
+      # Bootstrap's file first, by path, so it bootstraps the fresh machine the other then uses.
+      # A plain `uv run pytest` leaves tests/server_setup out.
+      - name: The server-setup tests
+        run: uv run pytest -v tests/server_setup/test_bootstrap.py tests/server_setup/test_app.py
+      - name: The delivery tests on the bootstrapped Server
+        run: uv run pytest tests/delivery -rs
+        env:
+          DEADLIFT_TEST_BOOTSTRAPPED: "true"

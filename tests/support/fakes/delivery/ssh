@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+# A fake `ssh` for the delivery tests, on the CI side's PATH. Instead of reaching a Server over the
+# tailnet, it runs the remote command on the fake Server in $DEADLIFT_TEST_SERVER, logged in as the
+# user before the `@`, the way Tailscale SSH would: a login shell with a fresh environment, where
+# `sudo` is the fake Server's and enforces the one sudo rule.
+#
+#   ssh [-o option]... [-T] <user>@<host> <command>...
+#
+# Like ssh, it joins the command's words with spaces for the remote shell, and passes stdin on.
+set -euo pipefail
+
+server=${DEADLIFT_TEST_SERVER:?the fake ssh needs DEADLIFT_TEST_SERVER}
+
+while (($#)); do
+  case $1 in
+    -o) shift 2 ;;
+    -T) shift ;;
+    -*) echo "fake ssh: unknown option $1" >&2 && exit 255 ;;
+    *) break ;;
+  esac
+done
+destination=${1:?fake ssh: no destination}
+shift
+user=${destination%@*}
+if [[ $user == "$destination" ]]; then
+  echo "fake ssh: the destination needs a user, as in deadlift-<app>@<server>" >&2
+  exit 255
+fi
+
+env=(
+  PATH="$server/bin:/usr/local/bin:/usr/bin:/bin"
+  HOME="$server/home"
+  DEADLIFT_TEST_SERVER="$server"
+  DEADLIFT_TEST_LOGIN="$user"
+)
+if [[ -n ${DOCKER_HOST:-} ]]; then env+=(DOCKER_HOST="$DOCKER_HOST"); fi
+exec env -i "${env[@]}" bash -c "$*"

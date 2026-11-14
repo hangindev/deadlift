@@ -1,0 +1,50 @@
+name: deadlift build
+description: >-
+  Builds an App's named images and pushes them to GHCR with deadlift's tag convention,
+  ghcr.io/<owner>/<repo>/<image>:sha-<commit>, so that `deliver` and `prune-registry` can find
+  them. Each is one image for the Server's platform, with no attestations. Run it from the App's
+  checkout. The job needs `packages: write`.
+inputs:
+  images:
+    description: >-
+      The images to build, one per line: a name of lowercase letters and digits joined by single
+      `_` (it reaches the template as `${DEADLIFT_IMAGE_<NAME>}`), then any of `context=<dir>`
+      (`.` by default), `file=<Dockerfile>` (`<context>/Dockerfile` by default) and
+      `target=<stage>`, separated by spaces. For example `worker context=worker target=runtime`.
+    required: true
+  commit:
+    description: The commit built, as a full SHA, which names each image's tag.
+    default: ${{ github.sha }}
+  platform:
+    description: The one platform to build for, the Server's.
+    default: linux/amd64
+  repository:
+    description: The repository the images belong to, as <owner>/<name>.
+    default: ${{ github.repository }}
+  username:
+    description: Who logs in to GHCR.
+    default: ${{ github.actor }}
+  token:
+    description: A token that can push to the repository's packages (packages write).
+    default: ${{ github.token }}
+outputs:
+  images:
+    description: >-
+      Each image's reference, one `<name>=<ref>` per line, as `deliver`'s `images` input takes
+      them.
+    value: ${{ steps.build.outputs.images }}
+runs:
+  using: composite
+  steps:
+    - id: build
+      shell: bash
+      # build.py reads and checks these inputs itself.
+      env:
+        INPUT_IMAGES: ${{ inputs.images }}
+        INPUT_COMMIT: ${{ inputs.commit }}
+        INPUT_PLATFORM: ${{ inputs.platform }}
+        INPUT_REPOSITORY: ${{ inputs.repository }}
+        INPUT_SERVER_URL: ${{ github.server_url }}
+        REGISTRY_USERNAME: ${{ inputs.username }}
+        REGISTRY_TOKEN: ${{ inputs.token }}
+      run: python3 -I "$GITHUB_ACTION_PATH/build.py" --from-action-inputs

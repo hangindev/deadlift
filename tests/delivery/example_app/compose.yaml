@@ -1,0 +1,29 @@
+# The example App's Compose template, as an App keeps it in its repo and `deliver` sends it.
+# `migrate` runs before `web`, which deadlift routes to and judges by its healthcheck.
+services:
+  migrate:
+    image: ${DEADLIFT_IMAGE_WEB}
+    command: ["python3", "migrate.py"]
+    restart: "no"
+    volumes:
+      - data:/data
+  web:
+    image: ${DEADLIFT_IMAGE_WEB}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    volumes:
+      - data:/data
+    healthcheck:
+      test: ["CMD", "python3", "health.py"]
+      interval: 2s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+      start_interval: 1s
+
+volumes:
+  data:
+
+x-deadlift:
+  route: web:3000

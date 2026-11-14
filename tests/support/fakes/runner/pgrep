@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# A fake `pgrep` on a fake CI runner: no process is ever running.
+set -euo pipefail
+printf 'pgrep %s\n' "$*" >>"${FAKE_RUNNER_STATE:?the fake pgrep needs FAKE_RUNNER_STATE}/calls.log"
+exit 1

@@ -1,0 +1,87 @@
+"""What deadlift's composite actions share: the CI job they run in.
+
+The actions run as the job's own user on a GitHub runner, from ``$GITHUB_ACTION_PATH``, on the
+runner's system python3. They aren't privileged, and whoever set the job's environment is the
+App's own workflow, so their children (``gh``, ``docker``, ``ssh``, ``sudo``) get the job's
+whole environment, as the Bash scripts' did: ``gh`` finds its token and host there, ``docker``
+its builder and ``ssh`` its agent. It's still passed explicitly, through
+:mod:`deadlift.core.process`.
+"""
+
+import json
+import os
+import re
+from collections.abc import Iterable, Mapping
+from pathlib import Path
+from typing import NoReturn
+
+from deadlift.core.outcome import refuse, refuse_usage
+from deadlift.core.process import Env, scrubbed_env
+
+# A shell's default IFS: how Bash's `read -a` split a line into words.
+_WORDS = re.compile(r"[ \t\n]+")
+
+
+def job_env(set_vars: Mapping[str, str] | None = None, *, drop: Iterable[str] = ()) -> Env:
+    """The job's whole environment, less the variables named in ``drop`` and with ``set_vars``
+    added, for an action's children."""
+    dropped = set(drop)
+    return scrubbed_env(
+        keep=tuple(name for name in os.environ if name not in dropped), set_vars=set_vars
+    )
+
+
+FROM_INPUTS = "--from-action-inputs"
+"""The one argument an action's step passes its script, which then reads the action's inputs
+(see :func:`action_input`) instead of a command line."""
+
+
+def action_input(name: str) -> str:
+    """The action's input ``name`` (such as ``keep-none``), as its step hands it on: in the
+    environment as ``INPUT_<NAME>``, upper-cased with ``-`` as ``_``."""
+    return os.environ.get(f"INPUT_{name.upper().replace('-', '_')}", "")
+
+
+def flag_input(name: str, *, what: str) -> bool:
+    """The action's input ``name``, which must be ``true`` or ``false``. Refuses anything else,
+    saying ``what`` wasn't done."""
+    value = action_input(name)
+    if value not in ("true", "false"):
+        refuse(f"{name} must be true or false, not '{value}', so {what}.")
+    return value == "true"
+
+
+def words(text: str) -> list[str]:
+    """``text`` split into words on spaces, tabs and newlines, as Bash's ``read -a`` does."""
+    return [word for word in _WORDS.split(text) if word]
+
+
+def usage(why: str, usage_line: str) -> NoReturn:
+    """Refuses a bad command line: the reason, then the ``Usage:`` line, both on stderr."""
+    refuse_usage(why, f"Usage: {usage_line}")
+
+
+def append(variable: str, lines: Iterable[str]) -> bool:
+    """Appends ``lines`` to the file the job's ``variable`` names (``GITHUB_OUTPUT``,
+    ``GITHUB_STEP_SUMMARY``), when it's set. Returns whether it was."""
+    path = os.environ.get(variable, "")
+    if not path:
+        return False
+    with Path(path).open("a", encoding="utf-8", errors="surrogateescape") as file:
+        file.writelines(f"{line}\n" for line in lines)
+    return True
+
+
+def json_values(text: str) -> list[object]:
+    """The JSON values in ``text``, one after another, as ``jq -s`` reads them (such as each
+    line of ``gh api --jq``). ValueError when it isn't JSON."""
+    decoder = json.JSONDecoder()
+    values: list[object] = []
+    at = 0
+    while True:
+        while at < len(text) and text[at] in " \t\r\n":
+            at += 1
+        if at == len(text):
+            return values
+        value, at = decoder.raw_decode(text, at)
+        values.append(value)

@@ -1,0 +1,21 @@
+#!/usr/bin/env -S python3 -I
+"""deadlift: the maintainer's command, run on their own computer (see deadlift.cli.main).
+
+A launcher: it loads deadlift from this checkout's src/, found from its own real path (a symlink
+to it, such as in ~/bin, works too), and runs deadlift.cli.main. It runs as python3 -I, so no
+PYTHON* variable, user site-packages or working directory changes what it imports.
+"""
+
+import sys
+
+# Written so an old python3 can parse it, and refuse.
+if sys.version_info < (3, 12):  # noqa: UP036 (bin/deadlift runs on any python3)
+    sys.stderr.write("deadlift: deadlift needs Python 3.12 or later\n")
+    sys.exit(2)
+
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+from deadlift.cli.main import main
+
+sys.exit(main(sys.argv[1:]))

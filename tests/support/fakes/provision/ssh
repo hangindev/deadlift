@@ -1,0 +1,151 @@
+#!/usr/bin/env python3
+"""A fake `ssh` for the provision wizard's tests, on the maintainer's computer. It stands in for
+machines bought at a provider, each a directory in $DEADLIFT_TEST_WORLD/machines/ named by its
+public address, and for the tailnet they join. A machine's directory holds:
+
+  public-ssh-closed   present once the provider's firewall blocks SSH on its public address
+  bootstraps          one line per bootstrap run on it, naming the route it came by
+  hostname, tags      its tailnet name and tags, once `tailscale up` has run on it
+
+It answers, as root only:
+  ssh [-o option]... [-t] root@<public address> <command>     until SSH there is closed
+  ssh [-o option]... [-t] root@<name>.tailtest.ts.net <command>   once the machine joined
+these commands:
+  true                            reachability
+  <bootstrap's remote command>    reads the tar of the Server's code on stdin, records the run
+  tailscale up [flag]...          joins the tailnet, taking --hostname and --advertise-tags
+  tailscale status --json         the machine's own name and tags
+
+Every call is logged to $DEADLIFT_TEST_WORLD/ssh.log, and anything else fails. Standard library
+only.
+"""
+
+import json
+import os
+import sys
+import tarfile
+from pathlib import Path
+
+SUFFIX = "tailtest.ts.net"
+
+
+def say(text: str) -> None:
+    sys.stderr.write(f"{text}\n")
+
+
+def tags_of(machine: Path) -> list[str] | None:
+    """The machine's tailnet tags, or None when it has no tags file."""
+    try:
+        text = (machine / "tags").read_text()
+    except FileNotFoundError:
+        say(f"fake ssh: {machine / 'tags'} is missing")
+        return None
+    return [tag for tag in text.split("\n") if tag]
+
+
+def bootstrap(machine: Path, route: str) -> int:
+    try:
+        with tarfile.open(fileobj=sys.stdin.buffer, mode="r|*") as tar:
+            names = {member.name for member in tar}
+    except tarfile.TarError as error:
+        say(f"tar: {error}")
+        return 2
+    if "deadlift/bootstrap/bootstrap.py" not in names:
+        say("fake ssh: bootstrap's tar holds no deadlift/bootstrap/bootstrap.py")
+        return 1
+    with (machine / "bootstraps").open("a") as runs:
+        runs.write(f"{route}\n")
+    print(f"==> bootstrap ran on {machine.name}")
+    return 0
+
+
+def tailscale_up(machine: Path, command: str) -> int:
+    tags = ""
+    for flag in command.split():
+        if flag.startswith("--hostname="):
+            (machine / "hostname.new").write_text(flag.removeprefix("--hostname=") + "\n")
+        elif flag.startswith("--advertise-tags="):
+            tags = flag.removeprefix("--advertise-tags=")
+    print("To authenticate, visit:")
+    print("        https://login.tailscale.com/a/fake")
+    (machine / "tags").write_text(tags.replace(",", "\n") + "\n")
+    if (machine / "hostname.new").is_file():
+        (machine / "hostname.new").replace(machine / "hostname")
+    print("Success.")
+    return 0
+
+
+def tailscale_status(machine: Path) -> int:
+    try:
+        name = (machine / "hostname").read_text().rstrip("\n")
+    except FileNotFoundError:
+        name = ""
+    tags = tags_of(machine)
+    if tags is None:
+        return 2
+    status = {"Self": {"HostName": name, "Tags": tags}}
+    sys.stdout.write(json.dumps(status, indent=2, ensure_ascii=False) + "\n")
+    return 0
+
+
+def main(argv: list[str]) -> int:
+    world_dir = os.environ.get("DEADLIFT_TEST_WORLD")
+    if not world_dir:
+        say("DEADLIFT_TEST_WORLD: the fake ssh needs DEADLIFT_TEST_WORLD")
+        return 1
+    world = Path(world_dir)
+
+    rest = argv
+    while rest and rest[0].startswith("-"):
+        if rest[0] == "-o":
+            rest = rest[2:]
+        elif rest[0] in ("-t", "-T", "-n"):
+            rest = rest[1:]
+        else:
+            say(f"fake ssh: unknown option {rest[0]}")
+            return 255
+    if not rest:
+        say("fake ssh: no destination")
+        return 1
+    destination, command = rest[0], " ".join(rest[1:])
+    with (world / "ssh.log").open("a") as log:
+        log.write(f"{destination} {command}\n")
+
+    user, _, host = destination.rpartition("@")
+    if not user:
+        user = host = destination
+    if user != "root":
+        say(f"{destination}: Permission denied (publickey).")
+        return 255
+
+    machines = world / "machines"
+    if (machines / host).is_dir():
+        machine, route = machines / host, "public"
+        if (machine / "public-ssh-closed").exists():
+            say(f"ssh: connect to host {host} port 22: Connection timed out")
+            return 255
+    else:
+        found = [
+            candidate
+            for candidate in sorted(machines.iterdir())
+            if (candidate / "hostname").is_file()
+            and f"{(candidate / 'hostname').read_text().rstrip(chr(10))}.{SUFFIX}" == host
+        ]
+        if not found:
+            say(f"ssh: Could not resolve hostname {host}: Name or service not known")
+            return 255
+        machine, route = found[-1], "tailnet"
+
+    if command == "true":
+        return 0
+    if "from deadlift.bootstrap.bootstrap import main" in command:
+        return bootstrap(machine, route)
+    if command.startswith("tailscale up "):
+        return tailscale_up(machine, command)
+    if command == "tailscale status --json":
+        return tailscale_status(machine)
+    say(f"fake ssh: the wizard has no reason to run '{command}' on a machine")
+    return 127
+
+
+sys.exit(main(sys.argv[1:]))

@@ -1,0 +1,71 @@
+#!/usr/bin/env python3
+"""A fake `ssh` on a fake CI runner, for testing the deliver action through its action.yml. It
+stands in for a whole Server: it keeps each delivery it's sent (who it logged in as, the words
+the remote shell would run, and what the tar held) and answers as the test set up.
+
+  ssh [-o option]... <user>@<host> <command>...
+
+State, in $FAKE_RUNNER_STATE:
+  server-reply, server-status   What the Server prints, and its exit code (0 when unset).
+  ssh/<n>/                      The nth delivery: destination, args (the remote command's words,
+                                as JSON), environment (the names of ssh's own variables, as
+                                JSON) and delivery/ (the tar's members).
+Standard library only.
+"""
+
+import contextlib
+import json
+import os
+import shlex
+import subprocess
+import sys
+from pathlib import Path
+
+
+def say(text: str) -> None:
+    sys.stderr.write(f"{text}\n")
+
+
+def main(argv: list[str]) -> int:
+    state_dir = os.environ.get("FAKE_RUNNER_STATE")
+    if not state_dir:
+        say("FAKE_RUNNER_STATE: the fake ssh needs FAKE_RUNNER_STATE")
+        return 1
+    state = Path(state_dir)
+    with (state / "calls.log").open("a") as log:
+        log.write(f"ssh {' '.join(argv)}\n")
+
+    rest = argv
+    while rest and rest[0].startswith("-"):
+        if rest[0] != "-o":
+            say(f"fake ssh: unknown option {rest[0]}")
+            return 255
+        rest = rest[2:]
+    if not rest:
+        say("fake ssh: no destination")
+        return 1
+    destination, command = rest[0], rest[1:]
+
+    (state / "ssh").mkdir(exist_ok=True)
+    call = state / "ssh" / str(len(list((state / "ssh").iterdir())) + 1)
+    (call / "delivery").mkdir(parents=True)
+    (call / "destination").write_text(f"{destination}\n")
+    # The remote shell splits the command line into words, undoing the client's quoting.
+    words = shlex.split(" ".join(command))
+    (call / "args").write_text(json.dumps(words, indent=2) + "\n")
+    # What of the job's environment ssh itself was handed: the names only.
+    (call / "environment").write_text(json.dumps(sorted(os.environ), indent=2) + "\n")
+    untar = subprocess.run(["tar", "-xf", "-", "-C", str(call / "delivery")], check=False)
+    if untar.returncode != 0:
+        return untar.returncode
+
+    with contextlib.suppress(FileNotFoundError):
+        sys.stdout.write((state / "server-reply").read_text())
+    sys.stdout.flush()
+    try:
+        return int((state / "server-status").read_text().strip())
+    except FileNotFoundError:
+        return 0
+
+
+sys.exit(main(sys.argv[1:]))

@@ -1,0 +1,48 @@
+name: deadlift prune-registry
+description: >-
+  Deletes an App's image versions from GHCR, except the ones listed to keep, so the registry
+  doesn't grow without end. Every image's versions are listed and checked before any is deleted.
+  The Server keeps its own copies of the images it runs, so a Rollback never needs one from here.
+  It assumes each version is a single image, as `build` pushes them, not a multi-platform index
+  whose platform images GHCR lists as untagged versions of their own.
+inputs:
+  images:
+    description: The App's image names, such as `web worker`, as `build` names them.
+    required: true
+  keep:
+    description: >-
+      The versions to keep, by tag (such as `sha-<commit>`) or digest, separated by commas,
+      spaces or newlines. A version is kept when any of its tags is listed. An empty list is
+      refused, and so is one that names none of an image's versions. An image not in GHCR yet,
+      such as a new App's, has nothing to delete.
+    default: ""
+  keep-none:
+    description: "`true` to delete every version of the images. Only then is an empty `keep` accepted."
+    default: "false"
+  dry-run:
+    description: "`true` to list what would be deleted, and delete nothing."
+    default: "false"
+  repository:
+    description: The repository the images belong to, as <owner>/<name>.
+    default: ${{ github.repository }}
+  token:
+    description: >-
+      A token with packages: write. Each package must also give the repository the Admin role
+      (its settings, Manage Actions access).
+    default: ${{ github.token }}
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      # prune-registry.py reads and checks these inputs itself. What it says goes in the job
+      # summary too.
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        GITHUB_REPOSITORY: ${{ inputs.repository }}
+        INPUT_IMAGES: ${{ inputs.images }}
+        INPUT_KEEP: ${{ inputs.keep }}
+        INPUT_KEEP_NONE: ${{ inputs.keep-none }}
+        INPUT_DRY_RUN: ${{ inputs.dry-run }}
+      run: |
+        python3 -I "$GITHUB_ACTION_PATH/prune-registry.py" --from-action-inputs 2>&1 |
+          tee -a "$GITHUB_STEP_SUMMARY"

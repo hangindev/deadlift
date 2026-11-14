@@ -1,0 +1,48 @@
+// The entries every deadlift Server needs in the tailnet policy, set once per tailnet: a second
+// Server, and every App's Service, are covered by the same entries, by tag. `deadlift server
+// provision` prints them without these top lines, for the maintainer to merge into the live
+// policy's sections of the same name. Each App's own entries (its CI tag, that tag's grant to the
+// Server's SSH port and its SSH rule) come from `deadlift app add`. Grants deny by default, so
+// nothing else reaches a Server, and a Server reaches nothing.
+{
+	"tagOwners": {
+		// Servers, joined by an admin in the provision wizard.
+		"tag:deadlift-server": ["autogroup:admin"],
+		// Each App's Tailscale Service, svc:<app>, created by `deadlift app add` (ADR 0003).
+		"tag:deadlift-svc": ["autogroup:admin"],
+	},
+
+	"autoApprovers": {
+		// Any Server may serve any App's Service, with no approval by hand.
+		"services": {
+			"tag:deadlift-svc": ["tag:deadlift-server"],
+		},
+	},
+
+	"grants": [
+		// Everyone on the tailnet reaches every App: the Dev Environment at 443, and each Feature
+		// Environment at its Slot's port, 10000 + Slot (Slots 1 to 9).
+		{
+			"src": ["autogroup:member"],
+			"dst": ["tag:deadlift-svc"],
+			"ip":  ["tcp:443", "tcp:10001-10009"],
+		},
+		// The tailnet's admins, to Servers: SSH only, which the SSH rule below narrows to root.
+		{
+			"src": ["autogroup:admin"],
+			"dst": ["tag:deadlift-server"],
+			"ip":  ["tcp:22"],
+		},
+	],
+
+	"ssh": [
+		// The maintainers, the tailnet's admins, as root: to re-run bootstrap and to add, remove
+		// and give secrets to Apps. No other member logs in to a Server.
+		{
+			"action": "accept",
+			"src":    ["autogroup:admin"],
+			"dst":    ["tag:deadlift-server"],
+			"users":  ["root"],
+		},
+	],
+}

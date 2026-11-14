@@ -19,7 +19,7 @@ Each App has its own CI tag and its own deploy user, and the deploy user may run
 deadlift-myapp ALL=(root) NOPASSWD: /usr/local/sbin/deadlift-entry
 ```
 
-The rule names no arguments, so the operation and its arguments are the entry command's to check. It works out the App from the user who called it (`SUDO_USER`, here `deadlift-myapp`), so a deploy user can only ever act on its own App, whatever arguments it passes. The deploy user isn't in the `docker` group, so the entry command pulls the App's images too, with the job's short-lived token sent inside the delivery and removed after. The deploy script itself is installed on the Server alongside the entry command and never delivered: a delivered script would run as root, so any App could reach every other App through it.
+The rule names no arguments, so the operation and its arguments are the entry command's to check. It works out the App from the user who called it (`SUDO_USER`, here `deadlift-myapp`), so a deploy user can only ever act on its own App, whatever arguments it passes. The deploy user isn't in the `docker` group, so the entry command pulls the App's images too, with the job's short-lived token sent inside the delivery and removed after. Every image a deploy names is pulled again with that token, even one the Server already has, so an App can't run another App's private image just because another App's deploy left it on the Server: the registry has to give it to this App's CI too. The deploy script itself is installed on the Server alongside the entry command and never delivered: a delivered script would run as root, so any App could reach every other App through it.
 
 ```mermaid
 flowchart LR
@@ -89,13 +89,17 @@ flowchart LR
     HOST["The host's own addresses,<br/>loopback services, Serve ports"]
   end
   ENV -->|"allowed"| NET["The internet"]
-  ENV -->|"dropped, DOCKER-USER and INPUT"| HOST
+  ENV -->|"dropped, FORWARD and INPUT (mangle)"| HOST
   ENV -->|"dropped"| TS["The tailnet, 100.64.0.0/10<br/>and fd7a:115c:a1e0::/48"]
   ENV -->|"dropped"| META["169.254.169.254, and private ranges"]
   ENV -.->|"no route: separate networks"| ENV2["Another App's Environment"]
 ```
 
 Without the dropped routes, one App's Environment could open another App's Environments through the host's tailnet address.
+
+The drops sit in the mangle table's FORWARD and INPUT chains, read before the filter table, rather than in Docker's `DOCKER-USER` chain: tailscaled puts its own chain at the top of the filter table's FORWARD when it comes up, accepting everything going out to the tailnet, so a rule in `DOCKER-USER` could come too late. _Amended in the code-review fix pass: this said `DOCKER-USER` and `INPUT`, as first planned; the code has always used the mangle table._
+
+Only the tailnet's admins (`autogroup:admin`) may SSH to a Server, as root, for the maintainer's CLI: bootstrap and `deadlift app`. Other members of the tailnet reach the Apps' Services and nothing else on a Server. _Amended in the code-review fix pass: the provision wizard's policy first let every member in as root._
 
 ## Consequences
 

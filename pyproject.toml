@@ -1,0 +1,87 @@
+# deadlift's Python: what ships (src/deadlift) and its tests (tests/). uv manages the tooling here
+# only; nothing that ships needs uv. Servers and CI runners run src/deadlift on the system python3
+# (Ubuntu 24.04's 3.12) through the launchers ADR 0004 describes.
+[project]
+name = "deadlift"
+version = "0.0.0"
+description = "Deliveries of Docker Compose Apps to a Server on a tailnet"
+requires-python = ">=3.12,<3.13"
+# What ships runs on the system python3, never from this environment, so nothing is declared
+# here. The Server has PyYAML from apt (python3-yaml); the dev group pins the same version.
+dependencies = []
+
+[dependency-groups]
+dev = [
+  "pyright[nodejs]>=1.1.400",
+  "pytest>=8.4",
+  "pyyaml==6.0.1",
+  "ruff>=0.12",
+  "types-pyyaml>=6.0.12",
+]
+
+[tool.uv]
+# A checkout, not a package: src/ is put on the path by the launchers, pytest and pyright.
+package = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src", "."]
+addopts = ["--strict-markers", "--import-mode=importlib"]
+norecursedirs = [".claude", ".venv", "tests/delivery", "tests/server_setup"]
+
+[tool.pyright]
+# A directory brings in only its *.py files, so each Python program without the suffix is named.
+include = [
+  "src",
+  "tests",
+  "actions",
+  "bin/deadlift",
+  "skills",
+  "tests/support/fakes/delivery/tailscale",
+  "tests/support/fakes/provision/ssh",
+  "tests/support/fakes/provision/tailscale",
+  "tests/support/fakes/runner/docker",
+  "tests/support/fakes/runner/ssh",
+]
+exclude = ["**/.venv", ".claude"]
+extraPaths = ["src"]
+pythonVersion = "3.12"
+typeCheckingMode = "strict"
+venvPath = "."
+venv = ".venv"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+extend-exclude = [".claude"]
+# The Python fakes, named as the programs they stand in for, so without the .py suffix.
+extend-include = [
+  "bin/deadlift",
+  "tests/support/fakes/delivery/tailscale",
+  "tests/support/fakes/provision/ssh",
+  "tests/support/fakes/provision/tailscale",
+  "tests/support/fakes/runner/docker",
+  "tests/support/fakes/runner/ssh",
+]
+
+[tool.ruff.lint]
+select = [
+  "E", "W", "F", "I", "B", "UP", "S", "SIM", "RUF", "PTH", "PL", "TID", "C4", "RET", "PIE",
+]
+ignore = [
+  # subprocess is how deadlift does its work; deadlift.core.process is the one place it's called.
+  "S603", "S607",
+  # A Server's paths, such as /tmp in a test, are deliberate.
+  "S108",
+  # Long reason messages and argument lists are the norm for a CLI.
+  "PLR0911", "PLR0912", "PLR0913", "PLR0915", "PLR2004",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "PLC0415", "TID251"]
+"src/deadlift/core/process.py" = ["TID251"]
+
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"subprocess".msg = "Run children through deadlift.core.process, which scrubs their environment and closes fds (ADR 0004)."
+"os.system".msg = "Run children through deadlift.core.process (ADR 0004)."
+"os.popen".msg = "Run children through deadlift.core.process (ADR 0004)."
