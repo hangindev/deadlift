@@ -2,7 +2,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { fakeGitHub, type GitHubState, type PackageVersion } from "./support/fake-github.ts";
 
-const script = "actions/prune-registry/prune-registry.sh";
+const script = "actions/prune-registry/prune-registry.py";
 
 let nextId = 1;
 /** A GHCR version pushed `ageInDays` ago with these tags. */
