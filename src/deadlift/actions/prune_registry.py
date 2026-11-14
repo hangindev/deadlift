@@ -7,19 +7,22 @@ Usage: prune-registry.py [--dry-run] (--keep <versions> | --keep-none) <image>..
   --keep-none  delete every version. An empty keep list is refused without it, and so is one
                that names none of an image's versions, since either would delete them all.
   --dry-run    say what would be deleted, and delete nothing.
+An image with no versions in GHCR, such as a new App's before its first build pushed it, has
+nothing to delete, and the closing reason line names it.
 Needs GH_TOKEN with packages: write (and each package giving the repository the Admin role), and
 GITHUB_REPOSITORY. Exits 0 done, 1 failed, 2 refused (nothing deleted).
 """
 
 import os
 import re
+import sys
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import cast
 
 from deadlift.actions import job
 from deadlift.core.names import image_name_problem, is_repository
-from deadlift.core.outcome import Exit, fail, refuse, run_main
+from deadlift.core.outcome import Exit, fail, reason, refuse, run_main
 from deadlift.core.process import Env, Stream, run
 
 USAGE = "usage: prune-registry.py [--dry-run] (--keep <versions> | --keep-none) <image>..."
@@ -93,6 +96,31 @@ def _gh(args: Sequence[str], env: Env, *, capture: bool = True) -> str | None:
     return done.stdout if done.ok else None
 
 
+class _NotFound(Exception):
+    """GitHub has no such package, or none the token can see: it answers 404 for both."""
+
+
+def _list_versions(versions_url: str, env: Env) -> list[Version] | None:
+    """An image's versions, or None when they couldn't be listed. Raises :class:`_NotFound`
+    when GitHub has no such package."""
+    done = run(
+        ["gh", "api", "--paginate", f"{versions_url}?per_page=100", "--jq", ".[]"],
+        env=env,
+        stdout=Stream.CAPTURE,
+        stderr=Stream.CAPTURE,
+    )
+    if not done.ok:
+        if "(HTTP 404)" in done.stderr:
+            raise _NotFound
+        sys.stderr.write(done.stderr)
+        sys.stderr.flush()
+        return None
+    try:
+        return parse_versions(done.stdout)
+    except ValueError:
+        return None
+
+
 def _prune(argv: Sequence[str]) -> Exit:
     keep_text = ""
     keep_given = keep_none = dry_run = False
@@ -150,16 +178,18 @@ def _prune(argv: Sequence[str]) -> Exit:
         fail(f"couldn't look up {repository} to find its packages, so nothing was deleted.")
     owner_path = f"orgs/{owner}" if owner_type.rstrip("\n") == "Organization" else f"users/{owner}"
 
-    # Every image's versions are listed and checked before any is deleted.
+    # Every image's versions are listed and checked before any is deleted. An image with none,
+    # such as a new App's before its first build, has nothing to delete.
     doomed: list[tuple[str, int, str]] = []
     total = 0
+    missing: list[str] = []
     for image in images:
         versions_url = f"{owner_path}/packages/container/{name}%2F{image}/versions"
-        listed = _gh(["--paginate", f"{versions_url}?per_page=100", "--jq", ".[]"], env)
         try:
-            versions = parse_versions(listed) if listed is not None else None
-        except ValueError:
-            versions = None
+            versions = _list_versions(versions_url, env)
+        except _NotFound:
+            missing.append(image)
+            continue
         if versions is None:
             fail(
                 f"couldn't list {image}'s versions in GHCR (ghcr.io/{owner}/{name}/{image}), so"
@@ -167,7 +197,7 @@ def _prune(argv: Sequence[str]) -> Exit:
                 " role (its settings, Manage Actions access), and the token needs packages: write."
             )
         total += len(versions)
-        if not keep_none and not any(_kept(version, keep) for version in versions):
+        if versions and not keep_none and not any(_kept(version, keep) for version in versions):
             refuse(
                 f"refused: none of {image}'s {len(versions)} versions is one to keep, which would"
                 " delete them all, so nothing was deleted. Keep names versions by tag (such as"
@@ -190,11 +220,26 @@ def _prune(argv: Sequence[str]) -> Exit:
         job.say(f"Deleted {what}")
         deleted += 1
     listing = ", ".join(images)
+    gone = ""
+    if missing:
+        gone = (
+            f" {_sentence(missing)} {'is' if len(missing) == 1 else 'are'}n't in GHCR"
+            f" (ghcr.io/{owner}/{name}/<image>) yet, or the token can't see"
+            f" {'it' if len(missing) == 1 else 'them'}, so there was nothing of"
+            f" {'it' if len(missing) == 1 else 'them'} to delete."
+        )
     if dry_run:
-        job.say(f"deadlift: would delete {deleted} of {total} versions of {listing} (a dry run).")
+        reason(f"would delete {deleted} of {total} versions of {listing} (a dry run).{gone}")
     else:
-        job.say(f"deadlift: deleted {deleted} of {total} versions of {listing}.")
+        reason(f"deleted {deleted} of {total} versions of {listing}.{gone}")
     return Exit.DONE
+
+
+def _sentence(names: Sequence[str]) -> str:
+    """Joins ``names`` as in a sentence: "a", "a and b", "a, b and c"."""
+    if len(names) < 2:
+        return "".join(names)
+    return f"{', '.join(names[:-1])} and {names[-1]}"
 
 
 def main(argv: Sequence[str]) -> int:

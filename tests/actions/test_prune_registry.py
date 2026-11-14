@@ -219,16 +219,41 @@ def test_fails_deleting_nothing_when_github_cant_say_who_owns_the_repository(
     assert fake.tags("web") == ["sha-c1", "sha-c2"]
 
 
-def test_fails_deleting_nothing_for_an_image_that_isnt_in_ghcr(github: MakeRegistry) -> None:
+# Such as a new App's, before its first build pushed anything, which the starter Sweep prunes.
+def test_has_nothing_to_delete_for_an_app_with_no_images_in_ghcr_yet(github: MakeRegistry) -> None:
+    fake = github({})
+
+    run = fake.prune("--keep", "sha-c2", "web", "worker")
+
+    assert run.status == 0, run.stderr
+    assert re.search(
+        r"^deadlift: deleted 0 of 0 versions of web, worker\. web and worker aren't in GHCR",
+        run.stderr,
+        re.M,
+    )
+
+
+def test_has_nothing_to_delete_for_an_image_with_no_versions(github: MakeRegistry) -> None:
+    fake = github({"web": []})
+
+    run = fake.prune("--keep", "sha-c2", "web")
+
+    assert run.status == 0, run.stderr
+    assert re.search(r"^deadlift: deleted 0 of 0 versions of web\.$", run.stderr, re.M)
+
+
+def test_prunes_the_images_in_ghcr_and_names_the_ones_that_arent(github: MakeRegistry) -> None:
     fake = github({"web": [version(["sha-c1"], 2), version(["sha-c2"], 1)]})
 
     run = fake.prune("--keep", "sha-c2", "web", "wrker")
 
-    assert run.status == 1
+    assert run.status == 0, run.stderr
     assert re.search(
-        r"^deadlift: couldn't list wrker's versions .*nothing was deleted", run.stderr, re.M
+        r"^deadlift: deleted 1 of 2 versions of web, wrker\. wrker isn't in GHCR .*can't see it",
+        run.stderr,
+        re.M,
     )
-    assert fake.tags("web") == ["sha-c1", "sha-c2"]
+    assert fake.tags("web") == ["sha-c2"]
 
 
 def test_fails_saying_what_it_deleted_when_a_deletion_fails(github: MakeRegistry) -> None:
@@ -268,7 +293,7 @@ def test_reports_what_it_deleted(github: MakeRegistry) -> None:
     assert run.status == 0, run.stderr
     assert "Deleted web:sha-c2\n" in run.stdout
     assert f"Deleted web@{untagged['name']}\n" in run.stdout
-    assert re.search(r"^deadlift: deleted 2 of 4 versions of web, worker\.$", run.stdout, re.M)
+    assert re.search(r"^deadlift: deleted 2 of 4 versions of web, worker\.$", run.stderr, re.M)
 
 
 def test_says_what_it_would_delete_and_deletes_nothing_on_a_dry_run(github: MakeRegistry) -> None:
@@ -279,7 +304,7 @@ def test_says_what_it_would_delete_and_deletes_nothing_on_a_dry_run(github: Make
     assert run.status == 0, run.stderr
     assert "Would delete web:sha-c1\n" in run.stdout
     assert re.search(
-        r"^deadlift: would delete 1 of 2 versions of web \(a dry run\)\.$", run.stdout, re.M
+        r"^deadlift: would delete 1 of 2 versions of web \(a dry run\)\.$", run.stderr, re.M
     )
     assert fake.tags("web") == ["sha-c1", "sha-c2"]
 

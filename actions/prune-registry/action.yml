@@ -13,7 +13,8 @@ inputs:
     description: >-
       The versions to keep, by tag (such as `sha-<commit>`) or digest, separated by commas,
       spaces or newlines. A version is kept when any of its tags is listed. An empty list is
-      refused, and so is one that names none of an image's versions.
+      refused, and so is one that names none of an image's versions. An image not in GHCR yet,
+      such as a new App's, has nothing to delete.
     default: ""
   keep-none:
     description: "`true` to delete every version of the images. Only then is an empty `keep` accepted."
