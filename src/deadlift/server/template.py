@@ -230,12 +230,8 @@ _TOP_LEVEL_KEYS = frozenset({"name", "services", "networks", "volumes", "configs
 
 
 class Unchecked(Exception):
-    """The template couldn't be checked: its normalised model has a shape the Bash allowlist's
-    jq stopped on, exiting 5 with nothing run. Kept so (see :data:`UNCHECKED_EXIT`)."""
-
-
-UNCHECKED_EXIT = 5
-"""The exit code of a template that couldn't be checked: jq's, as the Bash script exited."""
+    """The template's normalised model has a shape the allowlist doesn't know, so it couldn't be
+    checked. :func:`check` refuses it."""
 
 
 def _object(value: object) -> dict[str, object]:
@@ -336,11 +332,11 @@ def _service_problems(
                         f"{path} names {entry}: another container (container:) reaches outside "
                         "the App's project"
                     )
-                else:
-                    # The Bash allowlist applied its `sub` to the services, not to the entry, so
-                    # jq stopped here for every entry that isn't container:. Kept for parity
-                    # (followups.md): the message below is never reached.
-                    raise Unchecked(f"{path} names {entry}, which the allowlist can't check")
+                elif re.sub(r":(ro|rw)$", "", entry) not in services:
+                    found.append(
+                        f"{path} names {entry}, which isn't a service of the template: only the "
+                        "project's own services' volumes are allowed"
+                    )
         elif key == "networks":
             for network in _object(value).values():
                 extra = sorted(
@@ -506,11 +502,18 @@ def check(directory: Path, project: str) -> Checked:
         _refuse(f"the template isn't valid Compose: {last_line(done.stderr)}")
     text = done.stdout.rstrip("\n")
     try:
-        parsed: object = json.loads(text)
-    except ValueError as error:
-        raise Unchecked(f"the normalised model isn't JSON: {error}") from error
-    config = _object(parsed)
+        return _check_model(text)
+    except (ValueError, Unchecked) as error:
+        _refuse(
+            "the template couldn't be checked: `docker compose config` gave it a shape "
+            f"deadlift's allowlist doesn't know ({error})"
+        )
 
+
+def _check_model(text: str) -> Checked:
+    """Checks the normalised model ``text``. Raises :class:`Stop` for a template deadlift won't
+    run, and :class:`Unchecked` or ValueError for one it can't read."""
+    config = _object(json.loads(text))
     problem = allowlist_problem(config)
     if problem is not None:
         _refuse(f"the template's {problem}, and ADR 0001 refuses it")
@@ -707,15 +710,5 @@ def _main(argv: Sequence[str]) -> None:
     commands[command]()
 
 
-def say_unchecked(error: Unchecked) -> None:
-    """Says why a template couldn't be checked, as the Bash script's jq did: no reason line."""
-    sys.stderr.write(f"template: error: {error}\n")
-    sys.stderr.flush()
-
-
 def main(argv: Sequence[str]) -> int:
-    try:
-        return run_main(lambda: _main(argv))
-    except Unchecked as error:
-        say_unchecked(error)
-        return UNCHECKED_EXIT
+    return run_main(lambda: _main(argv))

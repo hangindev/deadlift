@@ -246,12 +246,15 @@ def test_the_override_keeps_a_lower_limit_of_the_templates_own_and_publishes_the
     assert document.startswith('{\n  "services": {\n    "web": {\n      "mem_limit": 268435456,')
 
 
-@pytest.mark.parametrize("entry", ["db", "db:ro", "other"])
-def test_volumes_from_a_service_cannot_be_checked_as_in_the_bash(entry: str) -> None:
-    # The Bash allowlist's jq stopped on every volumes_from entry that isn't container:
-    # (followups.md); the port keeps that until it's decided.
-    with pytest.raises(Unchecked):
-        allowlist_problem(model({"web": web(volumes_from=[entry]), "db": web()}))
+@pytest.mark.parametrize("entry", ["db", "db:ro", "db:rw"])
+def test_volumes_from_another_service_of_the_template_is_allowed(entry: str) -> None:
+    assert allowlist_problem(model({"web": web(volumes_from=[entry]), "db": web()})) is None
+
+
+def test_volumes_from_anything_but_a_service_of_the_template_is_refused() -> None:
+    problem = allowlist_problem(model({"web": web(volumes_from=["other:ro"]), "db": web()}))
+    assert problem is not None
+    assert problem.startswith("services.web.volumes_from names other:ro")
 
 
 def test_a_model_not_shaped_as_compose_makes_one_cannot_be_checked() -> None:

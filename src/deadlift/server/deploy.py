@@ -357,9 +357,6 @@ class Server:
                 if stop.why is not None:
                     reason(stop.why)
                 raise _Said(int(stop.code)) from None
-            except template.Unchecked as error:
-                template.say_unchecked(error)
-                raise _Said(template.UNCHECKED_EXIT) from None
             finally:
                 self.prune_quietly()
 
@@ -1410,7 +1407,10 @@ class App(Server):
             )
         routed = _routed_of(done.stdout)
         if routed is None:
-            raise template.Unchecked("dev's previous version has no x-deadlift.route to read")
+            self.fail(
+                "couldn't read dev's previous version: it has no x-deadlift.route. Nothing was "
+                "changed"
+            )
         self.config = cast(dict[str, object], json.loads(done.stdout))
         self.pull_images()
         before = ""
@@ -1771,7 +1771,4 @@ def main(argv: Sequence[str]) -> int:
         return int(stop.code)
     except _Said as said:
         return said.code
-    except template.Unchecked as error:
-        template.say_unchecked(error)
-        return template.UNCHECKED_EXIT
     return int(Exit.DONE)
