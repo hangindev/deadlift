@@ -15,22 +15,23 @@
 #                     joining the tailnet and closing public SSH. Stop it any time and run it
 #                     again to carry on (see cli/provision.sh).
 #   server bootstrap  Turns <server>, a fresh Ubuntu 24.04 machine or a Server already, into an up
-#                     to date Server. It sends this checkout's server/ over SSH as root and runs
-#                     its bootstrap.sh there (see it for what it sets up). Safe to run again: a
-#                     run with nothing to do changes nothing. <server> is anything `ssh root@`
-#                     takes: the machine's public address before it joins the tailnet, its
-#                     tailnet name after.
+#                     to date Server. It sends this checkout's Server code over SSH as root and
+#                     runs its bootstrap there (see src/deadlift/bootstrap/bootstrap.py for what
+#                     it sets up). Safe to run again: a run with nothing to do changes nothing.
+#                     <server> is anything `ssh root@` takes: the machine's public address
+#                     before it joins the tailnet, its tailnet name after.
 #   server status     Shows the Server's disk usage, and each App's ports, Slots in use, Volume
 #                     Snapshots and Environments.
 #   app add           Gives the App its place on the Server: its deploy user, deadlift-<app>,
 #                     outside the docker group, one sudo rule for the entry command, a block of
-#                     100 loopback ports and its settings (server/app.sh has the defaults). Then
-#                     creates its Tailscale Service, svc:<app>, tagged tag:deadlift-svc and
-#                     listing 443 and every Slot's port, 10000 + <slot>. Last, it prints the
-#                     App's own tailnet policy entries and the federated credential its CI joins
-#                     the tailnet with. The Service needs no entry: the provision wizard's cover
-#                     every Service tagged tag:deadlift-svc. Safe to run again, and running it
-#                     again with other settings changes them, keeping the App's ports.
+#                     100 loopback ports and its settings (src/deadlift/server/app.py has the
+#                     defaults). Then creates its Tailscale Service, svc:<app>, tagged
+#                     tag:deadlift-svc and listing 443 and every Slot's port, 10000 + <slot>.
+#                     Last, it prints the App's own tailnet policy entries and the federated
+#                     credential its CI joins the tailnet with. The Service needs no entry: the
+#                     provision wizard's cover every Service tagged tag:deadlift-svc. Safe to run
+#                     again, and running it again with other settings changes them, keeping the
+#                     App's ports.
 #                       --repo       The App's GitHub repository, whose workflows deliver it.
 #                       --slots      Feature Environments at once, 1 to 9.
 #                       --snapshots  Volume Snapshots of the Dev Environment to keep.
@@ -181,20 +182,18 @@ EOF
 
 server_bootstrap() {
   (($# == 1)) || usage "server bootstrap needs one <server>"
-  local server=$1 status=0
-  check_server "$server"
-  echo "Bootstrapping $server"
-  # COPYFILE_DISABLE keeps macOS tar from adding ._ files. Commands on the Server read nothing from
-  # the maintainer's terminal: stdin is the tar.
-  COPYFILE_DISABLE=1 tar -C "$root/server" -cf - . |
-    ssh -o StrictHostKeyChecking=accept-new "root@$server" \
-      'd=$(mktemp -d) && tar -xf - -C "$d" --no-same-owner && "$d/bootstrap.sh"; s=$?; rm -rf "$d"; exit $s' ||
-    status=$?
-  if ((status == 255)); then
-    echo "deadlift: couldn't reach $server over SSH as root, so nothing was changed." >&2
-    exit 1
-  fi
-  return "$status"
+  check_server "$1"
+  # The sender is Python now (deadlift.cli.server_bootstrap), on the maintainer's python3 3.12 or
+  # later, in isolated mode.
+  python3 -I -c '
+import sys
+if sys.version_info < (3, 12):
+    sys.stderr.write("deadlift: deadlift needs Python 3.12 or later\n")
+    sys.exit(2)
+sys.path.insert(0, sys.argv[1])
+from deadlift.cli.server_bootstrap import main
+sys.exit(main(sys.argv[2:]))
+' "$root/src" "$1"
 }
 
 server_status() {

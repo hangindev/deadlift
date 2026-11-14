@@ -49,7 +49,22 @@ class Launcher:
 # Every entry point a Server has. A port of a Server script adds its line here (and bootstrap
 # installs it), keeping the installed path the Bash script had, so whatever calls it (the entry
 # command, sudo's rule, systemd, `deadlift app` over SSH) doesn't change.
-LAUNCHERS: tuple[Launcher, ...] = ()
+LAUNCHERS: tuple[Launcher, ...] = (
+    Launcher(
+        "lib",
+        "app.sh",
+        "deadlift.server.app",
+        "deadlift's App administration on a Server: the Server half of `deadlift app` and"
+        " `server status`.",
+    ),
+    Launcher(
+        "lib",
+        "firewall.sh",
+        "deadlift.server.firewall",
+        "deadlift's firewall for containers (ADR 0001), run by bootstrap and"
+        " deadlift-firewall.service.",
+    ),
+)
 
 
 def launcher_source(module: str, *, modules: Path, description: str) -> str:

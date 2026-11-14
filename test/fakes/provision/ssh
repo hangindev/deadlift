@@ -12,7 +12,7 @@
 #   ssh [-o option]... [-t] root@<name>.tailtest.ts.net <command>   once the machine joined
 # these commands:
 #   true                            reachability
-#   <bootstrap's remote command>    reads the tar of server/ on stdin, records the run
+#   <bootstrap's remote command>    reads the tar of the Server's code on stdin, records the run
 #   tailscale up [flag]...          joins the tailnet, taking --hostname and --advertise-tags
 #   tailscale status --json         the machine's own name and tags
 #
@@ -60,13 +60,12 @@ else
   fi
 fi
 
-# shellcheck disable=SC2016 # A pattern below matches bootstrap's remote command, $d unexpanded.
 case $command in
   true) ;;
-  *'"$d/bootstrap.sh"'*)
+  *'from deadlift.bootstrap.bootstrap import main'*)
     files=$(tar -tf -)
-    if ! grep -qx './bootstrap.sh' <<<"$files"; then
-      echo "fake ssh: bootstrap's tar holds no bootstrap.sh" >&2
+    if ! grep -qx 'deadlift/bootstrap/bootstrap.py' <<<"$files"; then
+      echo "fake ssh: bootstrap's tar holds no deadlift/bootstrap/bootstrap.py" >&2
       exit 1
     fi
     echo "$route" >>"$machine/bootstraps"
