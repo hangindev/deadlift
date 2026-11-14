@@ -65,6 +65,20 @@ class TestTheLowerThreshold:
         assert over.outcome == "skipped", over.output
         assert matches(r"71% full, over .*70%", over.reason)
 
+    def test_is_read_from_a_settings_file_whose_last_line_has_no_line_break(
+        self, harness: Harness
+    ) -> None:
+        # As a maintainer's editor may save it.
+        server = harness.server(
+            disk_used=71,
+            settings="watchdog_disk_limit=90\nfeature_deploy_disk_limit=70",
+        )
+
+        over = deploy(harness, server, "a", "feature-first")
+
+        assert over.outcome == "skipped", over.output
+        assert matches(r"71% full, over .*70%", over.reason)
+
 
 class TestTheWatchdog:
     def test_over_the_upper_threshold_stops_every_feature_environment_on_the_server_and_leaves_every_dev_environment_running(  # noqa: E501

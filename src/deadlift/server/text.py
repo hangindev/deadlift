@@ -1,5 +1,5 @@
-"""The Server's small text conventions, kept exactly as its Bash scripts read and wrote them, so
-a Server's files mean the same to the Python: ``name=value`` files (app.conf, the Server-wide
+"""The Server's small text conventions, as its Bash scripts read and wrote them, so a Server's
+files mean the same to the Python: ``name=value`` files (app.conf, the Server-wide
 settings), the last line of a command's output in a reason, sentences naming several things, and
 values printed as ``jq -r`` printed them.
 """
@@ -12,10 +12,11 @@ from pathlib import Path
 def read_settings_text(text: str) -> list[tuple[str, str]]:
     """Each line of a ``name=value`` file, as Bash's ``while IFS='=' read -r key value`` read
     it: the name up to the first ``=``, the value the rest, less one trailing ``=`` when it's the
-    value's only one. A last line with no line break isn't read at all, as Bash's loop skips it.
+    value's only one. A last line with no line break is read too, as a hand-edited file may end
+    without one (where Bash's loop skipped it).
     """
     pairs: list[tuple[str, str]] = []
-    for line in text.split("\n")[:-1]:
+    for line in text.removesuffix("\n").split("\n") if text else []:
         key, _, rest = line.partition("=")
         if rest.endswith("=") and "=" not in rest[:-1]:
             rest = rest[:-1]
