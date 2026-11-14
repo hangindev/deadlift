@@ -269,6 +269,12 @@ class Server:
                 str(self.lib),
                 "--sbin",
                 str(self.sbin),
+                # Where a real Server's are fixed: written into the launchers, as nothing a
+                # caller sets moves them.
+                "--state",
+                str(self.state),
+                "--disk-used-file",
+                str(self.dir / "disk-used"),
                 "--no-chown",
             ],
             check=True,
@@ -303,10 +309,7 @@ class Server:
 
     def set_disk_used(self, percent: int) -> None:
         """Sets how full the fake Server's disk is, in percent, as the deploy script reads it."""
-        (self.dir / "server.env").write_text(
-            f"DEADLIFT_STATE_DIR={self.state}\nDEADLIFT_LIB_DIR={self.lib}\n"
-            f"DEADLIFT_DISK_USED={percent}\n"
-        )
+        (self.dir / "disk-used").write_text(f"{percent}\n")
 
     def cleanup(self) -> None:
         """Removes every Docker object of this Server's Apps: their Compose projects are all
@@ -450,7 +453,6 @@ class Server:
     def watchdog(self) -> Result:
         """Runs the watchdog as the Server's systemd timer does: the installed deploy script, as
         root, in a fresh environment."""
-        settings = [line for line in (self.dir / "server.env").read_text().split("\n") if line]
         docker_host = [f"DOCKER_HOST={value}" for value in _docker_host().values()]
         return collect(
             [
@@ -458,7 +460,6 @@ class Server:
                 "-i",
                 f"PATH={self.bin}:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
                 *docker_host,
-                *settings,
                 str(self.lib / "deploy"),
                 "watchdog",
             ],

@@ -85,3 +85,14 @@ def test_the_tailnet_dns_name_is_read_from_tailscale_status() -> None:
     assert magic_dns_suffix(status) == "tail1a2b3c.ts.net"
     assert magic_dns_suffix('{"Self": {}}') == ""
     assert magic_dns_suffix("") == ""
+
+
+def test_a_confirmation_is_typed_in_the_terminals_own_colour(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    wizard = Wizard(1, tmp_path / "answers.env")
+    wizard.yellow, wizard.reset = "<yellow>", "<reset>"
+    monkeypatch.setattr("deadlift.cli.wizard.read_line", lambda: "y")
+
+    assert wizard.confirm("Saved?")
+    assert capsys.readouterr().out == "  <yellow>? Saved? [y/N]<reset> "

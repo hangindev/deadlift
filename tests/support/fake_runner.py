@@ -10,7 +10,7 @@ import json
 import shutil
 import tempfile
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -29,6 +29,8 @@ class SentDelivery:
     """The command the Server ran, word by word."""
     files: dict[str, str]
     """The delivery tar's members and their contents."""
+    ssh_environment: list[str] = field(default_factory=list[str], compare=False)
+    """The names of the variables ssh itself was run with."""
 
 
 @dataclass(frozen=True)
@@ -92,6 +94,7 @@ class FakeRunner:
                     destination=(call / "destination").read_text().strip(),
                     command=command,
                     files={f.name: f.read_text() for f in sorted(delivery.iterdir())},
+                    ssh_environment=json.loads((call / "environment").read_text()),
                 )
             )
         return sent

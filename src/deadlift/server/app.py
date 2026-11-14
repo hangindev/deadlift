@@ -49,10 +49,22 @@ from pathlib import Path
 from typing import NoReturn, cast
 
 from deadlift.core.lock import server_lock
-from deadlift.core.outcome import Exit, Stop, fail, output, reason, refuse, run_main
+from deadlift.core.names import app_name_problem
+from deadlift.core.outcome import (
+    fail,
+    output,
+    reason,
+    refuse,
+    refuse_usage,
+    run_main,
+    say,
+)
 from deadlift.core.process import Completed, Stream, run, scrubbed_env
+from deadlift.server import host
+from deadlift.server.layout import layout
+from deadlift.server.text import sentence
 
-STATE = Path("/srv/deadlift")
+STATE = layout().state
 ENTRY_COMMAND = Path("/usr/local/sbin/deadlift-entry")
 SUDOERS = Path("/etc/sudoers.d")
 # Where the Apps' port blocks go: 20000-20099, 20100-20199 and so on.
@@ -69,8 +81,6 @@ Usage: app remove <app>
 Usage: app status
 """
 
-_APP_NAME = re.compile(r"[a-z]([a-z0-9-]{0,21}[a-z0-9])?")
-_FEATURE_PART = re.compile(r"-feature(-|$)")
 
 # add's settings: each one's form, and what it is when it isn't that.
 _ADD_SETTINGS: dict[str, tuple[re.Pattern[str], str]] = {
@@ -90,34 +100,6 @@ _ADD_SETTINGS: dict[str, tuple[re.Pattern[str], str]] = {
 
 class BadUsage(Exception):
     """The command line is wrong: refused, with the usage."""
-
-
-def app_name_problem(name: str) -> str | None:
-    """Why ``name`` can't be an App's name, or None when it can.
-
-    deadlift uses it in a user name, a Tailscale Service name, a tag and the Compose projects
-    deadlift-<app>-<environment>. A name with a ``-feature`` part could make one App's project the
-    same as another's (deadlift-x-feature-y-dev is App x's feature-y-dev and App x-feature-y's
-    dev), so it's refused too.
-    """
-    if not _APP_NAME.fullmatch(name):
-        return (
-            f"'{name}' isn't an App name: up to 23 of a-z, 0-9 and -, starting with a letter and"
-            " not ending with -"
-        )
-    if _FEATURE_PART.search(name):
-        return (
-            f"'{name}' isn't an App name: a part named feature after a - could clash with another"
-            " App's Feature Environments"
-        )
-    return None
-
-
-def sentence(parts: Sequence[str]) -> str:
-    """Joins ``parts`` as in a sentence: "a", "a and b", "a, b and c"."""
-    if len(parts) < 2:
-        return "".join(parts)
-    return f"{', '.join(parts[:-1])} and {parts[-1]}"
 
 
 def free_port_base(taken: Set[str]) -> int | None:
@@ -183,19 +165,11 @@ _ENV = scrubbed_env(keep=("PATH", "HOME", "DOCKER_HOST"))
 
 
 def _usage(why: str) -> NoReturn:
-    reason(why)
-    sys.stderr.write(USAGE)
-    sys.stderr.flush()
-    raise Stop(Exit.REFUSED, None)
+    refuse_usage(why, USAGE)
 
 
 def _refuse(why: str) -> NoReturn:
     refuse(f"{why}. Nothing was changed.")
-
-
-def _say(line: str = "") -> None:
-    sys.stdout.write(f"{line}\n")
-    sys.stdout.flush()
 
 
 def _check_app(name: str) -> None:
@@ -440,26 +414,11 @@ def op_secrets(args: Sequence[str]) -> None:
             reason(f"{app}'s {kind}.env on this Server already holds that. Nothing was changed.")
             return
         _write_aside(file, content, 0o600).replace(file)
-        environment = "Dev" if kind == "dev" else kind
+        environment = "Dev" if kind == "dev" else "Feature"
         reason(
             f"put {app}'s {kind}.env on this Server. Its variables reach the template from the"
             f" next deploy of a {environment} Environment on."
         )
-
-
-def _remove_project(project: str) -> bool:
-    """Removes every container, volume and network of the Compose project ``project``, by
-    Compose's label. Returns whether it all went."""
-    by_project = ["--filter", f"label=com.docker.compose.project={project}"]
-    ids = _docker_lines("container", "ls", "--all", "--quiet", *by_project)
-    removal = ["docker", "container", "rm", "--force", "--volumes", *ids]
-    if ids and not run(removal, env=_ENV, stdout=Stream.DEVNULL).ok:
-        return False
-    ids = _docker_lines("volume", "ls", "--quiet", *by_project)
-    if ids and not run(["docker", "volume", "rm", *ids], env=_ENV, stdout=Stream.DEVNULL).ok:
-        return False
-    ids = _docker_lines("network", "ls", "--quiet", *by_project)
-    return not ids or run(["docker", "network", "rm", *ids], env=_ENV, stdout=Stream.DEVNULL).ok
 
 
 def op_remove(args: Sequence[str]) -> None:
@@ -504,7 +463,7 @@ def op_remove(args: Sequence[str]) -> None:
         environments = directory / "environments"
         if environments.is_dir():
             projects += [
-                f"deadlift-{app}-{env.name}"
+                host.project_name(app, env.name)
                 for env in sorted(environments.iterdir())
                 if not env.name.startswith(".") and env.is_dir()
             ]
@@ -513,7 +472,7 @@ def op_remove(args: Sequence[str]) -> None:
         projects += _docker_lines("container", "ls", "--all", *by_app)
         projects += _docker_lines("volume", "ls", *by_app)
         for project in sorted(set(projects)):
-            if not _remove_project(project):
+            if not host.remove_project(project, _ENV):
                 fail(
                     f"couldn't remove all of {app}'s containers, volumes and networks (in"
                     f" {project}). Run `deadlift app remove` again"
@@ -547,48 +506,16 @@ def op_remove(args: Sequence[str]) -> None:
             reason(f"{app} isn't on this Server, so there was nothing to remove.")
 
 
-def disk_used() -> int:
-    """The percentage of disk used where the Server keeps its state and Docker its data, the
-    fuller."""
-    directories = [str(STATE)]
-    root = run(
-        ["docker", "info", "--format", "{{.DockerRootDir}}"],
-        env=_ENV,
-        stdout=Stream.CAPTURE,
-        stderr=Stream.DEVNULL,
-    )
-    if root.ok:
-        directories.append(root.stdout.rstrip("\n"))
-    df = run(["df", "-P", *directories], env=_ENV, stdout=Stream.CAPTURE)
-    highest = 0
-    for line in df.stdout.splitlines()[1:]:
-        fields = line.split()
-        if len(fields) >= 5:
-            highest = max(highest, _int(fields[4].replace("%", "", 1)))
-    return highest
-
-
-def _magic_dns_suffix() -> str:
-    status = run(
-        ["tailscale", "status", "--json"],
-        env=_ENV,
-        stdout=Stream.CAPTURE,
-        stderr=Stream.DEVNULL,
-    )
-    parsed = json_object(status.stdout) if status.ok else None
-    suffix = None if parsed is None else parsed.get("MagicDNSSuffix")
-    return suffix.rstrip("\n") if isinstance(suffix, str) else ""
-
-
 def op_status(args: Sequence[str]) -> None:
     if args:
         _usage("status takes no arguments")
-    suffix = _magic_dns_suffix()
+    suffix = host.magic_dns_suffix(_ENV, errors=Stream.DEVNULL)
     settings = STATE / "settings"
     deploy_limit = _setting_of(settings, "feature_deploy_disk_limit")
     watchdog_limit = _setting_of(settings, "watchdog_disk_limit")
-    _say(
-        f"Disk: {disk_used()}% used. Feature deploys are skipped over {deploy_limit}%, and the"
+    used = host.disk_used(STATE, _ENV) or 0
+    say(
+        f"Disk: {used}% used. Feature deploys are skipped over {deploy_limit}%, and the"
         f" watchdog stops Feature Environments over {watchdog_limit}%."
     )
     apps = 0
@@ -614,8 +541,8 @@ def op_status(args: Sequence[str]) -> None:
                 ):
                     snaps += 1
         port_base = _setting_of(conf, "port_base")
-        _say()
-        _say(
+        say()
+        say(
             f"{app}: ports {port_base}-{_int(port_base) + 99}, Slots in use: {held} of {slots},"
             f" Volume Snapshots: {snaps}"
         )
@@ -632,18 +559,18 @@ def op_status(args: Sequence[str]) -> None:
             elif (env_dir / "slot").is_file():
                 slot = _read(env_dir / "slot")
                 url = f"https://{app}.{suffix}:{10000 + _int(slot)}/" if suffix else ""
-            by_project = ["--filter", f"label=com.docker.compose.project=deadlift-{app}-{env}"]
-            total = len(_docker_lines("container", "ls", "--all", "--quiet", *by_project))
-            running = len(_docker_lines("container", "ls", "--quiet", *by_project))
+            project = host.by_project(host.project_name(app, env))
+            total = len(_docker_lines("container", "ls", "--all", "--quiet", *project))
+            running = len(_docker_lines("container", "ls", "--quiet", *project))
             counted = f"{running} of {total} running"
             slotted = f"Slot {slot}" if slot else ""
-            _say(f"  {env:<36} {counted:<22} {slotted:<8} {url}")
+            say(f"  {env:<36} {counted:<22} {slotted:<8} {url}")
             line = True
         if not line:
-            _say("  no Environments")
+            say("  no Environments")
     if apps == 0:
-        _say()
-        _say("No Apps. Add one with `deadlift app add`.")
+        say()
+        say("No Apps. Add one with `deadlift app add`.")
 
 
 def _main(argv: Sequence[str]) -> None:

@@ -122,12 +122,10 @@ def remapped_docker_config(text: str | None) -> str | None:
     should be written, or None when it's on already. Raises ValueError when ``text`` isn't a
     JSON object.
 
-    An empty file gives an empty config, as the Bash did with jq (see followups).
+    An empty file counts as an empty config, ``{}``, as Docker reads it.
     """
-    if text is None:
+    if text is None or not text.strip():
         text = "{}"
-    if not text.strip():
-        return ""
     parsed: object = json.loads(text)
     if not isinstance(parsed, dict):
         raise ValueError("Docker's config isn't a JSON object")

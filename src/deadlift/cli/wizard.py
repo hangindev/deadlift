@@ -184,7 +184,7 @@ class Wizard:
 
     def confirm(self, question: str) -> bool:
         """A y/N gate: True on yes."""
-        self._out(f"  {self.yellow}? {question} [y/N] ")
+        self._out(f"  {self.yellow}? {question} [y/N]{self.reset} ")
         reply = read_answer() or ""
         return reply[:1] in ("y", "Y")
 

@@ -14,10 +14,10 @@ import sys
 from collections.abc import Sequence
 
 from deadlift.actions import job
+from deadlift.core.names import is_repository
 from deadlift.core.outcome import REASON_PREFIX, Exit, Stop, fail, reason, refuse, run_main
 from deadlift.core.process import Env, Stream, run
 
-_REPOSITORY = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")
 _COMMIT = re.compile(r"[0-9a-f]{7,40}")
 # Plain branch names only, so the name can go into the API's paths as it is.
 _BRANCH = re.compile(r"[A-Za-z0-9_.-]+(/[A-Za-z0-9_.-]+)*")
@@ -25,7 +25,7 @@ _BRANCH = re.compile(r"[A-Za-z0-9_.-]+(/[A-Za-z0-9_.-]+)*")
 
 def check(branch: str, commit: str, repository: str) -> None:
     """Refuses (Stop) a repository, commit or branch this can't ask GitHub about."""
-    if not _REPOSITORY.fullmatch(repository):
+    if not is_repository(repository):
         refuse(f"GITHUB_REPOSITORY must be <owner>/<name>, not '{repository}'.")
     if not _COMMIT.fullmatch(commit):
         refuse(f"the commit must be a SHA, not '{commit}'.")

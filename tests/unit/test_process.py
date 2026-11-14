@@ -137,3 +137,8 @@ def test_python_children_run_isolated_when_asked() -> None:
         stdout=Stream.CAPTURE,
     )
     assert done.stdout.strip() == "1"
+
+
+def test_a_child_killed_by_a_signal_exits_as_a_shell_reports_it() -> None:
+    done = run(["sh", "-c", "kill -TERM $$"], env=scrubbed_env())
+    assert done.code == 128 + 15

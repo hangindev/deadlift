@@ -37,7 +37,8 @@ from dataclasses import dataclass
 from typing import NoReturn
 
 from deadlift.actions import job
-from deadlift.core.outcome import Exit, Stop, fail, reason, refuse, run_main
+from deadlift.core.names import image_name_problem, is_repository
+from deadlift.core.outcome import Exit, Stop, fail, reason, refuse, run_main, say
 from deadlift.core.process import Env, Stream, run
 
 USAGE = (
@@ -45,10 +46,8 @@ USAGE = (
     " -- <image>..."
 )
 
-_REPOSITORY = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")
 _COMMIT = re.compile(r"[0-9a-f]{40}|[0-9a-f]{64}")
 _PLATFORM = re.compile(r"[a-z0-9]+/[a-z0-9]+(/[a-z0-9]+)?")
-_IMAGE_NAME = re.compile(r"[a-z][a-z0-9]*(_[a-z0-9]+)*")
 _SETTINGS = ("context", "file", "target")
 
 
@@ -70,10 +69,9 @@ def parse_images(specs: Sequence[str]) -> list[Image]:
         name, *settings = job.words(spec) or [""]
         if not name:
             continue
-        if not _IMAGE_NAME.fullmatch(name):
-            refuse(
-                f"'{name}' isn't an image name: lowercase letters and digits, joined by single _"
-            )
+        problem = image_name_problem(name)
+        if problem is not None:
+            refuse(problem)
         if any(image.name == name for image in images):
             refuse(f"the image {name} is given twice")
         given = {"context": ".", "file": "", "target": ""}
@@ -97,7 +95,18 @@ def _usage(why: str) -> NoReturn:
     job.usage(f"{why}, so nothing was built.", USAGE)
 
 
+def action_argv() -> list[str]:
+    """The command line the build action's inputs make: one image per line of its images."""
+    repository = job.action_input("repository")
+    args = ["--repository", repository, "--commit", job.action_input("commit")]
+    args += ["--platform", job.action_input("platform")]
+    args += ["--source", f"{job.action_input('server-url')}/{repository}"]
+    return [*args, "--", *job.action_input("images").removesuffix("\n").split("\n")]
+
+
 def _build(argv: Sequence[str]) -> Exit:
+    if list(argv) == [job.FROM_INPUTS]:
+        argv = action_argv()
     options = {"repository": "", "commit": "", "platform": "linux/amd64", "source": ""}
     args = list(argv)
     while args:
@@ -111,7 +120,7 @@ def _build(argv: Sequence[str]) -> Exit:
             continue
         _usage(f"unknown argument '{arg}'")
     repository, commit, platform = options["repository"], options["commit"], options["platform"]
-    if not _REPOSITORY.fullmatch(repository):
+    if not is_repository(repository):
         _usage("--repository needs <owner>/<name>")
     if not _COMMIT.fullmatch(commit):
         _usage(f"--commit needs a full commit SHA, not '{commit}'")
@@ -170,7 +179,7 @@ def _push(
         args += ["--label", f"org.opencontainers.image.revision={commit}"]
         if image.target:
             args += ["--target", image.target]
-        job.say(f"Building {image.name} as {ref}")
+        say(f"Building {image.name} as {ref}")
         built = run(
             ["docker", "buildx", "build", *args, image.context], env=env, stdout=Stream.INHERIT
         )

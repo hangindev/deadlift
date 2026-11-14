@@ -8,7 +8,7 @@ import time
 from collections.abc import Sequence
 
 from deadlift.actions import job
-from deadlift.core.outcome import Exit, fail
+from deadlift.core.outcome import Exit, fail, run_main, say
 from deadlift.core.process import Env, Stream, run
 
 # How long to wait for tailscaled to stop: 20 looks, half a second apart.
@@ -27,7 +27,7 @@ def _leave() -> int:
         return int(Exit.DONE)
 
     if not run(["sudo", "tailscale", "logout"], env=env, stdout=Stream.INHERIT).ok:
-        job.say(
+        say(
             "::warning::deadlift: couldn't log out of the tailnet."
             " The node is removed when the job ends."
         )
@@ -38,10 +38,8 @@ def _leave() -> int:
         time.sleep(_PAUSE)
     if _running(env):
         fail("tailscaled didn't stop, so this job can't join the tailnet again.")
-    code = run(["sudo", "tailscaled", "--cleanup"], env=env, stdout=Stream.INHERIT).code
-    # As a shell reports a child killed by a signal.
-    return 128 - code if code < 0 else code
+    return run(["sudo", "tailscaled", "--cleanup"], env=env, stdout=Stream.INHERIT).code
 
 
 def main(argv: Sequence[str]) -> int:
-    return job.run_job(_leave)
+    return run_main(_leave)

@@ -1,7 +1,10 @@
 """The entry command: what an App's CI can and can't make the Server do, whatever it sends."""
 
+import io
+import os
 import re
 import shutil
+import tarfile
 import tempfile
 import time
 from collections.abc import Callable, Iterator
@@ -18,6 +21,8 @@ from tests.support.harness import (
     Result,
     ServeMapping,
     Symlink,
+    collect,
+    docker,
     example_template,
     get,
     matches,
@@ -82,6 +87,41 @@ class TestADeliveryThatIsntATarOfOnlyComposeYamlAndTheToken:
         assert server.tailscale_calls() == []
 
 
+def compressed_tar_of(template: bytes, *, owner: str) -> bytes:
+    """A gzipped tar holding `template` as compose.yaml, owned by `owner`: far smaller sent than
+    unpacked."""
+    buffer = io.BytesIO()
+    with tarfile.open(fileobj=buffer, mode="w:gz") as archive:
+        member = tarfile.TarInfo("compose.yaml")
+        member.size = len(template)
+        member.uname = member.gname = owner
+        archive.addfile(member, io.BytesIO(template))
+    return buffer.getvalue()
+
+
+@pytest.mark.parametrize("owner", ["runner", "a b"], ids=["any owner", "an owner with a space"])
+def test_a_delivery_that_unpacks_past_the_limit_is_refused_exit_2_however_its_sent(
+    harness: Harness, owner: str
+) -> None:
+    server = harness.server()
+    app = server.apps["a"].name
+    # 2 MiB of template that gzip makes a few kilobytes.
+    template = example_template().encode() + b"#" * (2 * 1024 * 1024) + b"\n"
+    delivery = compressed_tar_of(template, owner=owner)
+    assert len(delivery) < 1024 * 1024
+
+    result = server.send(
+        f"deadlift-{app}",
+        ["--protocol", "1", "deploy", "feature-1", "--image", f"web={harness.image()}"],
+        delivery,
+    )
+
+    assert result.code == 2, result.output
+    assert matches(r"^deadlift: refused the delivery: it unpacks to over", result.output, re.M)
+    assert server.containers(app) == ""
+    assert list((server.state / "deliveries").iterdir()) == []
+
+
 @dataclass(frozen=True)
 class Sent:
     result: Result
@@ -119,6 +159,41 @@ class TestTheDeliveryProtocol:
         assert sent.result.code == 2, sent.result.output
         assert matches(r"^deadlift: refused the delivery: .*protocol", sent.result.output, re.M)
         assert sent.containers == ""
+
+
+def test_the_environment_chooses_neither_what_the_entry_command_runs_nor_where_it_writes(
+    harness: Harness, scratch: Path
+) -> None:
+    server = harness.server()
+    app = server.apps["a"].name
+    ran = scratch / "planted-deploy-ran"
+    planted = scratch / "planted-lib"
+    planted.mkdir()
+    (planted / "deploy").write_text(f"#!/bin/sh\ntouch {ran}\n")
+    (planted / "deploy").chmod(0o755)
+    elsewhere = scratch / "planted-state"
+    (elsewhere / "apps" / app).mkdir(parents=True)
+    shutil.copyfile(server.state / "apps" / app / "app.conf", elsewhere / "apps" / app / "app.conf")
+
+    # As if sudo kept the caller's environment, which its env_reset doesn't.
+    result = collect(
+        [str(server.sbin / "deadlift-entry"), "--protocol", "1", "destroy", "feature-1"],
+        env={
+            "PATH": f"{server.bin}:/usr/local/bin:/usr/bin:/bin",
+            "HOME": str(scratch),
+            "SUDO_USER": f"deadlift-{app}",
+            **({"DOCKER_HOST": os.environ["DOCKER_HOST"]} if "DOCKER_HOST" in os.environ else {}),
+            "DEADLIFT_LIB_DIR": str(planted),
+            "DEADLIFT_STATE_DIR": str(elsewhere),
+            "DEADLIFT_DISK_USED": "0",
+        },
+        input=tar_of({"compose.yaml": example_template()}),
+    )
+
+    assert result.code == 0, result.output
+    assert matches(r"^deadlift: feature-1 isn't on this Server", result.output, re.M)
+    assert not ran.exists()
+    assert not (elsewhere / "deliveries").exists()
 
 
 def test_nothing_in_a_delivery_is_executed_the_token_included(
@@ -193,6 +268,25 @@ class TestTheAppIsWorkedOutFromSudoUser:
         assert get(server.slot_port("a", 1), "/version") == "1"
         assert server.serve_mappings() == before
         assert server.containers(b) == ""
+
+    def test_an_image_another_apps_deploy_left_on_the_server_runs_only_if_the_registry_gives_it(
+        self, harness: Harness
+    ) -> None:
+        server = harness.server()
+        a, b = server.apps["a"].name, server.apps["b"].name
+        assert server.deliver(
+            b, ["deploy", "dev", "--image", f"web={harness.image()}"]
+        ).outcome == ("done")
+        # b's private image: on the Server since b's deploy pulled it with b's token, and not
+        # one the registry gives a's.
+        private = f"{harness.repository}:{b}-private"
+        docker("image", "tag", harness.image(), private)
+
+        result = server.deliver(a, ["deploy", "feature-1", "--image", f"web={private}"])
+
+        assert result.code == 1, result.output
+        assert matches(rf"^deadlift: couldn't pull {re.escape(private)}", result.reason)
+        assert server.containers(a) == ""
 
     @pytest.mark.parametrize("user", ["deadlift-nobody", "root"])
     def test_a_user_that_isnt_an_apps_deploy_user_is_refused_exit_2(

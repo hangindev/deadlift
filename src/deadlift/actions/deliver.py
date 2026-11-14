@@ -4,12 +4,15 @@ entry command, and reports what happened. The delivery tests drive it end to end
 
 Usage:
   deliver.py --server <host> --app <app> [--compose <file>] <operation> [arguments...]
+  deliver.py --from-action-inputs
 
   --server   The Server's name on the tailnet.
   --app      The App, whose deploy user deadlift-<app> the delivery logs in as.
   --compose  The App's Compose template, sent with ``deploy`` only. compose.yaml by default.
   The operation and its arguments are passed to the entry command as given, for example
   ``deploy feature-42 --image web=ghcr.io/owner/app/web:sha-1234``.
+  --from-action-inputs  Takes all of these from the deliver action's inputs instead, as
+             INPUT_<NAME> (see :func:`action_argv`).
 
 Environment:
   DEADLIFT_REGISTRY_TOKEN  The job's registry token, which the Server pulls the App's images
@@ -42,8 +45,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from deadlift.actions import job
-from deadlift.core.outcome import REASON_PREFIX, parse_outputs, reason
-from deadlift.core.process import NOT_FOUND, Stream, start
+from deadlift.core.outcome import REASON_PREFIX, Exit, parse_outputs, reason, run_main
+from deadlift.core.process import NOT_FOUND, Stream, shell_status, start
 
 USAGE = "deliver.py --server <host> --app <app> [--compose <file>] <operation> [arguments...]"
 
@@ -52,6 +55,9 @@ PROTOCOL = 1
 saying to re-run bootstrap."""
 
 ENTRY_COMMAND = "/usr/local/sbin/deadlift-entry"
+
+TOKEN_VARIABLE = "DEADLIFT_REGISTRY_TOKEN"  # noqa: S105 - its name, not its value
+"""Where the job's registry token comes from, to be sent inside the delivery and nowhere else."""
 
 # ssh's own exit code when it couldn't connect or log in.
 _SSH_FAILED = 255
@@ -87,9 +93,9 @@ def report(status: int, log: str, *, server: str, app: str) -> Report:
     last = said[-1] if said else ""
     found = {name: outputs.get(name, "") for name in ("url", "environment", "swept")}
     match status:
-        case 0:
+        case Exit.DONE:
             return Report("done", last, **found, status=0)
-        case 75:
+        case Exit.SKIPPED:
             return Report("skipped", last, **found, status=0)
         case _ if status == _SSH_FAILED:
             unreachable = (
@@ -118,7 +124,7 @@ def summary(operation: str, arguments: Sequence[str], delivered: Report) -> list
     return lines
 
 
-def _copy_like_cp(source: Path, target: Path) -> None:
+def _copy_with_mode(source: Path, target: Path) -> None:
     """Copies a file as ``cp`` does: its contents, and its mode less the umask."""
     shutil.copyfile(source, target)
     umask = os.umask(0)
@@ -129,7 +135,8 @@ def _copy_like_cp(source: Path, target: Path) -> None:
 def _send(work: Path, members: list[str], destination: str, command: str) -> tuple[int, str]:
     """Streams the delivery tar into ssh, echoing what the Server prints (its stdout and stderr
     together) to stdout as it comes. Returns ssh's exit code and what it printed."""
-    env = job.job_env()
+    # The token goes only inside the delivery: neither tar nor ssh needs it.
+    env = job.job_env(drop=(TOKEN_VARIABLE,))
     tar_argv = ["tar", "-C", str(work / "delivery"), "-cf", "-", "--files-from=/dev/null"]
     ssh_argv = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=30"]
     ssh_argv += ["-o", "StrictHostKeyChecking=accept-new", destination, command]
@@ -156,14 +163,35 @@ def _send(work: Path, members: list[str], destination: str, command: str) -> tup
             log += chunk
             sys.stdout.buffer.write(chunk)
             sys.stdout.buffer.flush()
-    code = ssh.wait()
+    status = shell_status(ssh.wait())
     tar.wait()
-    # As a shell reports a child killed by a signal.
-    status = 128 - code if code < 0 else code
     return status, log.decode("utf-8", errors="surrogateescape")
 
 
+def action_argv() -> list[str]:
+    """The command line the deliver action's inputs make: its operation and Environment, each
+    image (one per line or separated by spaces), the keys to keep (separated by commas, spaces
+    or newlines) and its flags, which must each be true or false."""
+    keep_none = job.flag_input("keep-none", what="nothing was delivered")
+    discard = job.flag_input("discard-newer-data", what="nothing was delivered")
+    args = ["--server", job.action_input("server"), "--app", job.action_input("app")]
+    args += ["--compose", job.action_input("compose"), job.action_input("operation")]
+    if environment := job.action_input("environment"):
+        args.append(environment)
+    for image in job.words(job.action_input("images")):
+        args += ["--image", image]
+    if keep := job.words(job.action_input("keep").replace(",", " ")):
+        args += ["--keep", ",".join(keep)]
+    if keep_none:
+        args.append("--keep-none")
+    if discard:
+        args.append("--discard-newer-data")
+    return args
+
+
 def _deliver(argv: Sequence[str]) -> int:
+    if list(argv) == [job.FROM_INPUTS]:
+        argv = action_argv()
     options = {"server": "", "app": "", "compose": "compose.yaml"}
     args = list(argv)
     while args and args[0].startswith("-"):
@@ -189,9 +217,9 @@ def _deliver(argv: Sequence[str]) -> int:
         if operation == "deploy":
             if not Path(compose).is_file():
                 job.usage(f"there's no Compose template at {compose}", USAGE)
-            _copy_like_cp(Path(compose), work / "delivery" / "compose.yaml")
+            _copy_with_mode(Path(compose), work / "delivery" / "compose.yaml")
             members.append("compose.yaml")
-        token = os.environ.get("DEADLIFT_REGISTRY_TOKEN", "")
+        token = os.environ.get(TOKEN_VARIABLE, "")
         if token:
             fd = os.open(work / "delivery" / "token", os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
             os.fchmod(fd, 0o600)
@@ -220,4 +248,4 @@ def _deliver(argv: Sequence[str]) -> int:
 
 
 def main(argv: Sequence[str]) -> int:
-    return job.run_job(lambda: _deliver(argv))
+    return run_main(lambda: _deliver(argv))

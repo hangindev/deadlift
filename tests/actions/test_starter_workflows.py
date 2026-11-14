@@ -345,6 +345,16 @@ class TestDeadliftFeaturesCommentAndCheck:
         assert run.jobs["deliver"].result == "failure"
         assert reason in fake.comments(42)[0]["body"]
         assert "https://github.com/acme/shop/actions/runs/" in fake.comments(42)[0]["body"]
+        # A neutral check, which never blocks a merge, saying it failed.
+        assert fake.checks() == [
+            Containing(
+                {
+                    "head_sha": sha("a"),
+                    "conclusion": "neutral",
+                    "output": Containing({"title": "Deploy failed", "summary": reason}),
+                }
+            )
+        ]
 
 
 class TestDeadliftFeaturesConditions:

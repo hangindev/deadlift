@@ -2,7 +2,8 @@
 
 import pytest
 
-from deadlift.server.deploy import fullest_disk, keep_keys, repository_of
+from deadlift.server.deploy import keep_keys, repository_of
+from deadlift.server.host import fullest_disk
 
 
 @pytest.mark.parametrize(

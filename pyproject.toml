@@ -35,7 +35,7 @@ include = [
   "src",
   "tests",
   "actions",
-  "bin",
+  "bin/deadlift",
   "skills",
   "tests/support/fakes/delivery/tailscale",
   "tests/support/fakes/provision/ssh",
@@ -56,6 +56,7 @@ target-version = "py312"
 extend-exclude = [".claude"]
 # The Python fakes, named as the programs they stand in for, so without the .py suffix.
 extend-include = [
+  "bin/deadlift",
   "tests/support/fakes/delivery/tailscale",
   "tests/support/fakes/provision/ssh",
   "tests/support/fakes/provision/tailscale",

@@ -1,5 +1,5 @@
-"""What the maintainer's commands share: how they end, the checks on an App's and a Server's
-names, and the environment their children run with.
+"""What the maintainer's commands share: how they end, the check on a Server's name,
+and the environment their children run with.
 
 The CLI runs on the maintainer's own computer (macOS or Linux), as the maintainer, so its children
 (``ssh``, ``git``, ``tar``, ``tailscale``, a browser opener) get the maintainer's whole
@@ -23,8 +23,6 @@ from deadlift.core.process import Env, scrubbed_env
 # The checkout bin/deadlift runs from: src/deadlift/cli/common.py is four levels below it.
 ROOT = Path(__file__).resolve().parents[3]
 
-_APP = re.compile(r"[a-z]([a-z0-9-]{0,21}[a-z0-9])?")
-_APP_FEATURE = re.compile(r"-feature(-|$)")
 _SERVER = re.compile(r"[A-Za-z0-9][A-Za-z0-9.:-]*")
 
 
@@ -65,27 +63,6 @@ def usage(why: str) -> NoReturn:
     raise Usage(why, USAGE)
 
 
-def is_app_name(app: str) -> bool:
-    """The Server's rule for an App's name (deadlift.server.app): up to 23 of a-z, 0-9 and -,
-    starting with a letter and not ending with -, with no part named feature after a -."""
-    return _APP.fullmatch(app) is not None and _APP_FEATURE.search(app) is None
-
-
-def app_name_problem(app: str) -> str | None:
-    """Why ``app`` isn't an App name, as ``deadlift app`` says it, or None when it is one."""
-    if _APP.fullmatch(app) is None:
-        return (
-            f"'{app}' isn't an App name: up to 23 of a-z, 0-9 and -, starting with a letter and"
-            " not ending with -"
-        )
-    if _APP_FEATURE.search(app) is not None:
-        return (
-            f"'{app}' isn't an App name: a part named feature after a - could clash with another"
-            " App's Feature Environments"
-        )
-    return None
-
-
 def is_server_name(server: str) -> bool:
     """Whether ``server`` is a host name or address ``ssh root@`` may take."""
     return _SERVER.fullmatch(server) is not None
@@ -94,23 +71,6 @@ def is_server_name(server: str) -> bool:
 def maintainer_env() -> Env:
     """The maintainer's own environment, for a child of the CLI (see the module's docstring)."""
     return scrubbed_env(keep=tuple(os.environ))
-
-
-def shell_status(code: int) -> int:
-    """A child's exit code as a shell gives it: 128 + N for one killed by signal N."""
-    return 128 - code if code < 0 else code
-
-
-def say(text: str = "", *, end: str = "\n") -> None:
-    """Writes ``text`` to stdout at once, ahead of anything a child writes."""
-    sys.stdout.write(text + end)
-    sys.stdout.flush()
-
-
-def tell(text: str) -> None:
-    """Writes the line ``text`` to stderr at once."""
-    sys.stderr.write(text + "\n")
-    sys.stderr.flush()
 
 
 def _bytes_as_given(stream: object) -> None:

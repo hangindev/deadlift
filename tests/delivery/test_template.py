@@ -44,6 +44,11 @@ REFUSALS: list[tuple[str, Callable[[], str], str]] = [
         lambda: with_healthcheck('      test: ["NONE"]\n'),
         r"disabled",
     ),
+    (
+        "names its route in a shape deadlift doesn't read",
+        lambda: example_template().replace("x-deadlift:\n  route: web:3000", "x-deadlift: web", 1),
+        r"couldn't be checked",
+    ),
 ]
 
 

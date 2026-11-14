@@ -202,6 +202,23 @@ class TestWhatATemplateMayHold:
         assert get(server.slot_port("a", 1), "/version") == "1"
         assert matches(r"-postgres-1", server.running_containers(app))
 
+    @pytest.mark.parametrize("entry", ["migrate", "migrate:ro"])
+    def test_volumes_from_another_service_of_the_template_is_allowed(
+        self, harness: Harness, entry: str
+    ) -> None:
+        server = harness.server()
+        app = server.apps["a"].name
+
+        result = server.deliver(
+            app,
+            ["deploy", "feature-1", "--image", f"web={harness.image()}"],
+            template=with_probe(f'    volumes_from: ["{entry}"]\n'),
+        )
+
+        assert result.outcome == "done", result.output
+        assert get(server.slot_port("a", 1), "/version") == "1"
+        assert matches(r"-probe-1", server.running_containers(app))
+
 
 WAYS: list[tuple[str, Callable[[Path], str]]] = [
     ("env_file", lambda file: in_web(f"    env_file: {file}\n")),

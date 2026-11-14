@@ -11,21 +11,44 @@ its builder and ``ssh`` its agent. It's still passed explicitly, through
 import json
 import os
 import re
-import sys
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import NoReturn
 
-from deadlift.core.outcome import Exit, Stop, reason, run_main
+from deadlift.core.outcome import refuse, refuse_usage
 from deadlift.core.process import Env, scrubbed_env
 
 # A shell's default IFS: how Bash's `read -a` split a line into words.
 _WORDS = re.compile(r"[ \t\n]+")
 
 
-def job_env(set_vars: Mapping[str, str] | None = None) -> Env:
-    """The job's whole environment, with ``set_vars`` added, for an action's children."""
-    return scrubbed_env(keep=tuple(os.environ), set_vars=set_vars)
+def job_env(set_vars: Mapping[str, str] | None = None, *, drop: Iterable[str] = ()) -> Env:
+    """The job's whole environment, less the variables named in ``drop`` and with ``set_vars``
+    added, for an action's children."""
+    dropped = set(drop)
+    return scrubbed_env(
+        keep=tuple(name for name in os.environ if name not in dropped), set_vars=set_vars
+    )
+
+
+FROM_INPUTS = "--from-action-inputs"
+"""The one argument an action's step passes its script, which then reads the action's inputs
+(see :func:`action_input`) instead of a command line."""
+
+
+def action_input(name: str) -> str:
+    """The action's input ``name`` (such as ``keep-none``), as its step hands it on: in the
+    environment as ``INPUT_<NAME>``, upper-cased with ``-`` as ``_``."""
+    return os.environ.get(f"INPUT_{name.upper().replace('-', '_')}", "")
+
+
+def flag_input(name: str, *, what: str) -> bool:
+    """The action's input ``name``, which must be ``true`` or ``false``. Refuses anything else,
+    saying ``what`` wasn't done."""
+    value = action_input(name)
+    if value not in ("true", "false"):
+        refuse(f"{name} must be true or false, not '{value}', so {what}.")
+    return value == "true"
 
 
 def words(text: str) -> list[str]:
@@ -35,24 +58,7 @@ def words(text: str) -> list[str]:
 
 def usage(why: str, usage_line: str) -> NoReturn:
     """Refuses a bad command line: the reason, then the ``Usage:`` line, both on stderr."""
-    reason(why)
-    sys.stderr.write(f"Usage: {usage_line}\n")
-    sys.stderr.flush()
-    raise Stop(Exit.REFUSED, None)
-
-
-def run_job(body: Callable[[], int]) -> int:
-    """Like :func:`~deadlift.core.outcome.run_main`, for a body that ends with whatever exit code
-    a child gave it (such as the Server's, through ssh), not only one of deadlift's own."""
-    code: list[int] = []
-    stopped = run_main(lambda: code.append(body()))
-    return code[0] if code else stopped
-
-
-def say(line: str) -> None:
-    """Writes a line to stdout at once, so it stays in order with stderr in a merged log."""
-    sys.stdout.write(f"{line}\n")
-    sys.stdout.flush()
+    refuse_usage(why, f"Usage: {usage_line}")
 
 
 def append(variable: str, lines: Iterable[str]) -> bool:

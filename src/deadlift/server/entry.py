@@ -11,7 +11,9 @@ Usage, as `deliver` calls it over Tailscale SSH:
 It works out the App from the user who called it (SUDO_USER, deadlift-<app>), never from its
 arguments, so a deploy user can only ever act on its own App. It reads the delivery, one tar on
 stdin holding at most compose.yaml (the App's Compose template) and token (the job's registry
-token) as plain files, and refuses anything else. It then runs the deploy script that bootstrap
+token) as plain files of at most 1 MiB between them unpacked, and refuses anything else. It
+reads the tar itself, with Python's tarfile, rather than unpacking it with tar, so what it
+checks is exactly what it keeps. It then runs the deploy script that bootstrap
 installed beside it, which checks the operation's arguments and runs it under the Server's lock.
 Nothing in a delivery is ever executed, and the delivery is removed afterwards, token included.
 
@@ -21,38 +23,37 @@ reason saying to re-run bootstrap, rather than misread.
 Exit codes: 2 when it refuses, changing and running nothing; otherwise the deploy script's
 (0 done, 1 failed, 2 refused, 75 skipped).
 
-Settings, for the tests only: DEADLIFT_STATE_DIR and DEADLIFT_LIB_DIR move the Server's state
-and the installed deploy script. sudo's env_reset never passes them on, so on a Server they're
-always the defaults.
+Where the Server's state and the installed deploy script are is fixed (deadlift.server.layout),
+never read from the environment, so no variable a caller manages to pass through sudo chooses
+what runs as root or where it writes.
 """
 
+import lzma
 import os
-import re
 import shutil
+import tarfile
 import tempfile
+import zlib
 from collections.abc import Sequence
 from pathlib import Path
 from typing import NoReturn
 
-from deadlift.core.outcome import Stop, reason
+from deadlift.core.names import is_app_name
 from deadlift.core.outcome import refuse as stop_refused
+from deadlift.core.outcome import run_main
 from deadlift.core.process import Stream, run, scrubbed_env
+from deadlift.server.layout import layout
 
 # The delivery protocols this entry command speaks. A new one is added here, by bootstrap, before
 # any `deliver` sends it.
 PROTOCOLS = ("1",)
 # The most a delivery may hold: a Compose template and a token are far smaller.
 MAX_DELIVERY_BYTES = 1024 * 1024
+# What a delivery may hold.
+DELIVERED = ("compose.yaml", "token")
 # What the deploy script is given of this process's environment: what sudo's env_reset (and the
-# tests' stand-in for it) leaves, and the tests' settings, which a Server never has.
-DEPLOY_ENV = (
-    "PATH",
-    "HOME",
-    "DOCKER_HOST",
-    "DEADLIFT_STATE_DIR",
-    "DEADLIFT_LIB_DIR",
-    "DEADLIFT_DISK_USED",
-)
+# tests' stand-in for it) leaves.
+DEPLOY_ENV = ("PATH", "HOME", "DOCKER_HOST")
 
 
 def refuse(why: str) -> NoReturn:
@@ -64,43 +65,46 @@ def app_of(user: str, state: Path) -> str:
     app = user.removeprefix("deadlift-")
     if not (
         user.startswith("deadlift-")
-        and re.fullmatch(r"[a-z0-9][a-z0-9-]*", app)
+        and is_app_name(app)
         and (state / "apps" / app / "app.conf").is_file()
     ):
         refuse(f"'{user or 'nobody'}' isn't the deploy user of an App on this Server")
     return app
 
 
-def _awk_number(field: str) -> float:
-    """A field as awk adds it up: its leading number, or 0."""
-    matched = re.match(r"[ \t]*([+-]?(?:[0-9]+\.?[0-9]*|\.[0-9]+)(?:[eE][+-]?[0-9]+)?)", field)
-    return float(matched[1]) if matched else 0.0
-
-
-def check_listing(listing: str, members: str) -> None:
-    """Refuses a delivery whose ``tar -tvf`` ``listing`` and ``tar -tf`` ``members`` show
-    anything but compose.yaml and token, each once, as plain files of at most
-    :data:`MAX_DELIVERY_BYTES` unpacked."""
-    if listing:
-        rows = listing.split("\n")
-        # Only plain files: no directories, links or devices.
-        if any(not row.startswith("-") for row in rows):
-            refuse("it holds something other than plain files")
-        # Sizes as unpacked, so a compressed archive can't grow past the limit either.
-        unpacked = sum(_awk_number(fields[2]) if len(fields) > 2 else 0.0
-                       for fields in (row.split() for row in rows))  # fmt: skip
-        if unpacked > MAX_DELIVERY_BYTES:
-            refuse(f"it unpacks to over {MAX_DELIVERY_BYTES} bytes")
-    seen: set[str] = set()
-    for member in members.split("\n"):
-        if not member:
-            continue
-        name = member.removeprefix("./")
-        if name not in ("compose.yaml", "token"):
-            refuse(f"it holds '{member}', and only compose.yaml and token may be delivered")
-        if name in seen:
-            refuse(f"it holds {name} twice")
-        seen.add(name)
+def read_delivery(archive: Path) -> dict[str, bytes]:
+    """The files of the delivery tar at ``archive``, by name: compose.yaml and token, each at
+    most once, as plain files of at most :data:`MAX_DELIVERY_BYTES` unpacked between them.
+    Refuses anything else. It's read here, member by member from each one's own header, and
+    never unpacked by tar, so what's checked is exactly what's used, and a compressed archive
+    stops being read once what it holds grows past the limit."""
+    members: list[tarfile.TarInfo] = []
+    unpacked = 0
+    try:
+        with tarfile.open(archive, "r:*") as tar:
+            for member in tar:
+                members.append(member)
+                unpacked += member.size
+                if unpacked > MAX_DELIVERY_BYTES:
+                    refuse(f"it unpacks to over {MAX_DELIVERY_BYTES} bytes")
+            # Only plain files: no directories, links or devices.
+            if any(not member.isreg() for member in members):
+                refuse("it holds something other than plain files")
+            files: dict[str, bytes] = {}
+            for member in members:
+                name = member.name.removeprefix("./")
+                if name not in DELIVERED:
+                    refuse(
+                        f"it holds '{member.name}', and only compose.yaml and token may be "
+                        "delivered"
+                    )
+                if name in files:
+                    refuse(f"it holds {name} twice")
+                content = tar.extractfile(member)
+                files[name] = b"" if content is None else content.read()
+    except (tarfile.TarError, EOFError, OSError, zlib.error, lzma.LZMAError):
+        refuse("it isn't a tar archive")
+    return files
 
 
 def _read_stdin(archive: Path) -> int:
@@ -117,8 +121,7 @@ def _read_stdin(archive: Path) -> int:
 
 
 def _entry(argv: Sequence[str]) -> int:
-    state = Path(os.environ.get("DEADLIFT_STATE_DIR") or "/srv/deadlift")
-    lib = Path(os.environ.get("DEADLIFT_LIB_DIR") or "/usr/local/lib/deadlift")
+    state, lib = layout().state, layout().lib
 
     # The App, from the deploy user that sudo says called us.
     app = app_of(os.environ.get("SUDO_USER", ""), state)
@@ -153,33 +156,17 @@ def _entry(argv: Sequence[str]) -> int:
 def _deliver(app: str, delivery: Path, lib: Path, rest: Sequence[str]) -> int:
     archive = delivery / "archive.tar"
     files = delivery / "files"
-    env = scrubbed_env(keep=("PATH", "HOME"))
 
     size = _read_stdin(archive)
     if size <= 0:
         refuse("stdin was empty, and a delivery is a tar archive")
     if size > MAX_DELIVERY_BYTES:
         refuse(f"it's over {MAX_DELIVERY_BYTES} bytes")
-    listing = run(
-        ["tar", "-tvf", str(archive)], env=env, stdout=Stream.CAPTURE, stderr=Stream.DEVNULL
-    )
-    if not listing.ok:
-        refuse("it isn't a tar archive")
-    members = run(["tar", "-tf", str(archive)], env=env, stdout=Stream.CAPTURE)
-    if not members.ok:
-        return members.code
-    check_listing(listing.stdout.rstrip("\n"), members.stdout.rstrip("\n"))
-    files.mkdir()
-    extracted = run(
-        [
-            "tar", "-xf", str(archive), "-C", str(files), "--no-same-owner",
-            "--no-same-permissions",
-        ],
-        env=env,
-    )  # fmt: skip
-    if not extracted.ok:
-        refuse("it couldn't be unpacked")
+    delivered = read_delivery(archive)
     archive.unlink()
+    files.mkdir()
+    for name, content in delivered.items():
+        (files / name).write_bytes(content)
 
     # Not exec, so the delivery is removed afterwards.
     done = run(
@@ -187,15 +174,9 @@ def _deliver(app: str, delivery: Path, lib: Path, rest: Sequence[str]) -> int:
         env=scrubbed_env(keep=DEPLOY_ENV),
         stdout=Stream.INHERIT,
     )
-    # A deploy script killed by a signal exits as a shell reports it.
-    return done.code if done.code >= 0 else 128 - done.code
+    return done.code
 
 
 def main(argv: Sequence[str]) -> int:
     os.umask(0o077)
-    try:
-        return _entry(argv)
-    except Stop as stop:
-        if stop.why is not None:
-            reason(stop.why)
-        return int(stop.code)
+    return run_main(lambda: _entry(argv))

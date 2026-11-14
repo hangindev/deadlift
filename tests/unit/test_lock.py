@@ -26,7 +26,15 @@ def is_locked(state: Path) -> bool:
 def holds_lock_file(pid: int, state: Path) -> bool:
     target = str(lock_path(state))
     fds = Path(f"/proc/{pid}/fd")
-    return any(str(fd.readlink()) == target for fd in fds.iterdir())
+    for fd in fds.iterdir():
+        try:
+            held = str(fd.readlink())
+        except FileNotFoundError:
+            # Closed between the listing and the readlink: it holds nothing now.
+            continue
+        if held == target:
+            return True
+    return False
 
 
 def test_the_lock_is_held_inside_the_block_and_released_after(tmp_path: Path) -> None:

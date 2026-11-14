@@ -113,6 +113,19 @@ class TestDeployDev:
 
         assert len(server.volume_snapshots(server.apps["a"].name)) == 2
 
+    def test_keeps_the_volume_snapshots_bounded_however_many_deploys_fail(
+        self, harness: Harness
+    ) -> None:
+        server = dev_on_version_1(harness, snapshots=2)
+
+        for version in (2, 3, 4, 5):
+            result = deploy_dev(harness, server, "failing-migration", version)
+            assert matches(r"Recovery succeeded", result.reason), result.output
+
+        # The 2 newest, and the one Dev's current version was first deployed over, which
+        # --discard-newer-data goes back to.
+        assert len(server.volume_snapshots(server.apps["a"].name)) == 3
+
     def test_keeps_3_volume_snapshots_when_the_app_doesnt_say(self, harness: Harness) -> None:
         server = dev_on_version_1(harness)
 

@@ -24,8 +24,9 @@ def test_a_value_keeps_its_own_equals_signs_but_not_one_trailing_one() -> None:
     ]
 
 
-def test_a_last_line_without_its_line_break_is_not_read() -> None:
-    assert read_settings_text("x=1\ny=2") == [("x", "1")]
+def test_a_last_line_without_its_line_break_is_read_too() -> None:
+    assert read_settings_text("x=1\ny=2") == [("x", "1"), ("y", "2")]
+    assert read_settings_text("") == []
 
 
 def test_last_line_is_what_tail_gives_without_the_line_break() -> None:

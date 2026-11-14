@@ -84,33 +84,19 @@ runs:
         ping: ${{ inputs.server }}
     - id: deliver
       shell: bash
+      # deliver.py reads and checks these inputs itself.
       env:
-        APP: ${{ inputs.app }}
-        SERVER: ${{ inputs.server }}
-        OPERATION: ${{ inputs.operation }}
-        ENVIRONMENT: ${{ inputs.environment }}
-        IMAGES: ${{ inputs.images }}
-        KEEP: ${{ inputs.keep }}
-        KEEP_NONE: ${{ inputs.keep-none }}
-        DISCARD_NEWER_DATA: ${{ inputs.discard-newer-data }}
-        COMPOSE: ${{ inputs.compose }}
+        INPUT_APP: ${{ inputs.app }}
+        INPUT_SERVER: ${{ inputs.server }}
+        INPUT_OPERATION: ${{ inputs.operation }}
+        INPUT_ENVIRONMENT: ${{ inputs.environment }}
+        INPUT_IMAGES: ${{ inputs.images }}
+        INPUT_KEEP: ${{ inputs.keep }}
+        INPUT_KEEP_NONE: ${{ inputs.keep-none }}
+        INPUT_DISCARD_NEWER_DATA: ${{ inputs.discard-newer-data }}
+        INPUT_COMPOSE: ${{ inputs.compose }}
         DEADLIFT_REGISTRY_TOKEN: ${{ inputs.registry-token }}
-      run: |
-        for flag in keep-none:"$KEEP_NONE" discard-newer-data:"$DISCARD_NEWER_DATA"; do
-          if [[ ${flag#*:} != true && ${flag#*:} != false ]]; then
-            echo "deadlift: ${flag%%:*} must be true or false, not '${flag#*:}', so nothing was delivered." >&2
-            exit 2
-          fi
-        done
-        args=(--server "$SERVER" --app "$APP" --compose "$COMPOSE" "$OPERATION")
-        if [[ -n $ENVIRONMENT ]]; then args+=("$ENVIRONMENT"); fi
-        read -ra images -d '' <<<"$IMAGES" || true # one per line or on one line
-        for image in "${images[@]}"; do args+=(--image "$image"); done
-        read -ra keep -d '' <<<"${KEEP//,/ }" || true
-        if ((${#keep[@]})); then args+=(--keep "$(IFS=, && echo "${keep[*]}")"); fi
-        if [[ $KEEP_NONE == true ]]; then args+=(--keep-none); fi
-        if [[ $DISCARD_NEWER_DATA == true ]]; then args+=(--discard-newer-data); fi
-        python3 -I "$GITHUB_ACTION_PATH/deliver.py" "${args[@]}"
+      run: python3 -I "$GITHUB_ACTION_PATH/deliver.py" --from-action-inputs
     # Also after a failure, so the job can join again, as the App's CI or anything else.
     - if: always()
       shell: bash

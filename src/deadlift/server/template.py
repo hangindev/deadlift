@@ -54,9 +54,9 @@ from typing import NoReturn, cast
 
 import yaml
 
-from deadlift.core.outcome import Exit, Stop, reason, run_main
+from deadlift.core.outcome import Exit, Stop, refuse_usage, run_main
 from deadlift.core.process import Env, Stream, run, scrubbed_env
-from deadlift.server.text import jq_text, last_line, read_settings
+from deadlift.server.text import json_text, last_line, read_settings
 
 USAGE = (
     "Usage: template check <dir> <project>\n"
@@ -79,10 +79,7 @@ def _fail(why: str) -> NoReturn:
 
 
 def _usage(why: str) -> NoReturn:
-    reason(why)
-    sys.stderr.write(USAGE)
-    sys.stderr.flush()
-    raise Stop(Exit.REFUSED, None)
+    refuse_usage(why, USAGE)
 
 
 def child_env() -> Env:
@@ -230,12 +227,8 @@ _TOP_LEVEL_KEYS = frozenset({"name", "services", "networks", "volumes", "configs
 
 
 class Unchecked(Exception):
-    """The template couldn't be checked: its normalised model has a shape the Bash allowlist's
-    jq stopped on, exiting 5 with nothing run. Kept so (see :data:`UNCHECKED_EXIT`)."""
-
-
-UNCHECKED_EXIT = 5
-"""The exit code of a template that couldn't be checked: jq's, as the Bash script exited."""
+    """The template's normalised model has a shape the allowlist doesn't know, so it couldn't be
+    checked. :func:`check` refuses it."""
 
 
 def _object(value: object) -> dict[str, object]:
@@ -312,13 +305,13 @@ def _service_problems(
                 source = mount.get("source")
                 if kind == "bind" and "docker.sock" in _string(source if _truthy(source) else ""):
                     found.append(
-                        f"{path} mounts the Docker socket, {jq_text(source)}, which reaches every "
-                        "App on the Server"
+                        f"{path} mounts the Docker socket, {json_text(source)}, which reaches "
+                        "every App on the Server"
                     )
                 elif kind == "bind":
                     found.append(
-                        f"{path} bind-mounts {jq_text(source)} from the Server: only named volumes "
-                        "and tmpfs are allowed"
+                        f"{path} bind-mounts {json_text(source)} from the Server: only named "
+                        "volumes and tmpfs are allowed"
                     )
                 elif kind in ("volume", "tmpfs"):
                     extra = sorted(set(mount) - _MOUNT_KEYS)
@@ -326,7 +319,8 @@ def _service_problems(
                         found.append(f"{path} sets {extra[0]} on a mount: {_why(extra[0])}")
                 else:
                     found.append(
-                        f"{path} mounts a {jq_text(kind)}: only named volumes and tmpfs are allowed"
+                        f"{path} mounts a {json_text(kind)}: only named volumes and tmpfs are "
+                        "allowed"
                     )
         elif key == "volumes_from":
             for entry_value in _array(value):
@@ -336,11 +330,11 @@ def _service_problems(
                         f"{path} names {entry}: another container (container:) reaches outside "
                         "the App's project"
                     )
-                else:
-                    # The Bash allowlist applied its `sub` to the services, not to the entry, so
-                    # jq stopped here for every entry that isn't container:. Kept for parity
-                    # (followups.md): the message below is never reached.
-                    raise Unchecked(f"{path} names {entry}, which the allowlist can't check")
+                elif re.sub(r":(ro|rw)$", "", entry) not in services:
+                    found.append(
+                        f"{path} names {entry}, which isn't a service of the template: only the "
+                        "project's own services' volumes are allowed"
+                    )
         elif key == "networks":
             for network in _object(value).values():
                 extra = sorted(
@@ -382,10 +376,10 @@ def _resource_problems(
     for key, value in _object(resource).items():
         path = f"{kind}.{name}.{key}"
         if key == "name":
-            if kind in ("configs", "secrets") or value == f"{jq_text(project)}_{name}":
+            if kind in ("configs", "secrets") or value == f"{json_text(project)}_{name}":
                 continue
             found.append(
-                f"{path} is {jq_text(value)}: a {single} named outside the project could be "
+                f"{path} is {json_text(value)}: a {single} named outside the project could be "
                 "another App's"
             )
         elif key == "external":
@@ -394,12 +388,12 @@ def _resource_problems(
             found.append(f"{path} is set: driver options can mount the Server's files")
         elif key == "file":
             found.append(
-                f"{path} reads {jq_text(value)} from the Server: only inline content is allowed"
+                f"{path} reads {json_text(value)} from the Server: only inline content is allowed"
             )
         elif key == "driver":
             if value == "local" or (kind == "networks" and value == "bridge"):
                 continue
-            found.append(f"{path} is {jq_text(value)}: only the default driver is allowed")
+            found.append(f"{path} is {json_text(value)}: only the default driver is allowed")
         elif key == "ipam":
             ipam = _object(value)
             config = ipam.get("config")
@@ -506,17 +500,24 @@ def check(directory: Path, project: str) -> Checked:
         _refuse(f"the template isn't valid Compose: {last_line(done.stderr)}")
     text = done.stdout.rstrip("\n")
     try:
-        parsed: object = json.loads(text)
-    except ValueError as error:
-        raise Unchecked(f"the normalised model isn't JSON: {error}") from error
-    config = _object(parsed)
+        return _check_model(text)
+    except (ValueError, Unchecked) as error:
+        _refuse(
+            "the template couldn't be checked: `docker compose config` gave it a shape "
+            f"deadlift's allowlist doesn't know ({error})"
+        )
 
+
+def _check_model(text: str) -> Checked:
+    """Checks the normalised model ``text``. Raises :class:`Stop` for a template deadlift won't
+    run, and :class:`Unchecked` or ValueError for one it can't read."""
+    config = _object(json.loads(text))
     problem = allowlist_problem(config)
     if problem is not None:
         _refuse(f"the template's {problem}, and ADR 0001 refuses it")
 
     route_value = _get(config.get("x-deadlift"), "route")
-    route = jq_text(route_value).rstrip("\n") if _truthy(route_value) else ""
+    route = json_text(route_value).rstrip("\n") if _truthy(route_value) else ""
     if not route:
         _refuse(
             "the template has no x-deadlift.route. Name the service deadlift routes to as "
@@ -615,7 +616,7 @@ def override_document(
 ) -> str:
     """deadlift's override for the checked template ``config``, as JSON: each limit the
     template's own where that's set and lower, else the App's."""
-    route = jq_text(_get(config.get("x-deadlift"), "route"))
+    route = json_text(_get(config.get("x-deadlift"), "route"))
     matched = re.search(r"^(.+):([0-9]+)$", route)
     if matched is None:  # pragma: no cover - check() let only <service>:<port> through
         raise ValueError(f"x-deadlift.route is {route!r}")
@@ -707,15 +708,5 @@ def _main(argv: Sequence[str]) -> None:
     commands[command]()
 
 
-def say_unchecked(error: Unchecked) -> None:
-    """Says why a template couldn't be checked, as the Bash script's jq did: no reason line."""
-    sys.stderr.write(f"template: error: {error}\n")
-    sys.stderr.flush()
-
-
 def main(argv: Sequence[str]) -> int:
-    try:
-        return run_main(lambda: _main(argv))
-    except Unchecked as error:
-        say_unchecked(error)
-        return UNCHECKED_EXIT
+    return run_main(lambda: _main(argv))

@@ -47,6 +47,11 @@ def test_writes_a_new_docker_config_with_only_userns_remap() -> None:
     assert bootstrap.remapped_docker_config(None) == '{\n  "userns-remap": "default"\n}'
 
 
+@pytest.mark.parametrize("config", ["", "\n", "  \n"])
+def test_turns_userns_remap_on_in_an_empty_docker_config(config: str) -> None:
+    assert bootstrap.remapped_docker_config(config) == '{\n  "userns-remap": "default"\n}'
+
+
 def test_replaces_an_empty_userns_remap() -> None:
     assert bootstrap.remapped_docker_config('{"userns-remap": "", "debug": true}') == (
         '{\n  "userns-remap": "default",\n  "debug": true\n}'

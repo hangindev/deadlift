@@ -211,7 +211,10 @@ class Provision:
                 "any App's Service without approval by hand, and everyone on the tailnet reaches"
                 " every"
             )
-            w.note("App at 443 and its Slots' ports. Members SSH to Servers as root.")
+            w.note(
+                "App at 443 and its Slots' ports. Only the tailnet's admins SSH to Servers, as"
+                " root."
+            )
             w.open_url("https://login.tailscale.com/admin/acls/file")
             w.step(
                 "Merge each section below into the section of the same name, keeping what's there:"

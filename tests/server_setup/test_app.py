@@ -268,6 +268,14 @@ class TestAnAppsSettingsAndSecretsOnTheServer:
 
         set_ = apps.deadlift("app", "secrets", a, "dev", str(secrets), "--server", "localhost")
         assert set_.code == 0, set_.output
+        assert "from the next deploy of a Dev Environment on" in set_.output
+        feature_secrets = work / "feature.env"
+        feature_secrets.write_text("GREETING=hello from feature secrets\n")
+        set_feature = apps.deadlift(
+            "app", "secrets", a, "feature", str(feature_secrets), "--server", "localhost"
+        )
+        assert set_feature.code == 0, set_feature.output
+        assert "from the next deploy of a Feature Environment on" in set_feature.output
         first = apps.deliver_dev(a, template(1))
         assert first.code == 0, first.output
         second = apps.deliver_dev(a, template(2))

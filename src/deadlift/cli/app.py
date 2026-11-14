@@ -13,6 +13,7 @@ import json
 import os
 import re
 import shlex
+import ssl
 import urllib.error
 import urllib.request
 from collections.abc import Sequence
@@ -22,15 +23,12 @@ from typing import cast
 
 from deadlift.cli.common import (
     Exited,
-    app_name_problem,
     is_server_name,
     maintainer_env,
-    say,
-    shell_status,
-    tell,
     usage,
 )
-from deadlift.core.outcome import OUTPUT_PREFIX, fail
+from deadlift.core.names import app_name_problem
+from deadlift.core.outcome import OUTPUT_PREFIX, fail, say, tell
 from deadlift.core.process import NOT_FOUND, Stream, Target, run
 
 # Installed by bootstrap: the Server half of the app and server status commands.
@@ -109,7 +107,7 @@ def on_server(server: str, args: Sequence[str], *, stdin: Target = Stream.DEVNUL
             outputs.append(line)
         else:
             say(line)
-    status = shell_status(done.code)
+    status = done.code
     if status == SSH_UNREACHABLE:
         fail(f"couldn't reach {server} over SSH as root, so nothing was changed.")
     if status == NOT_FOUND:
@@ -170,6 +168,12 @@ def tailscale_api(method: str, path: str, body: object = None) -> ApiAnswer:
     except (urllib.error.URLError, OSError, ValueError) as error:
         why = error.reason if isinstance(error, urllib.error.URLError) else error
         tell(f"{api}: {why}")
+        if isinstance(why, ssl.SSLCertVerificationError):
+            tell(
+                "The Python running deadlift may have no CA certificates. A python.org Python"
+                " on macOS gets them from its Install Certificates.command, in its folder in"
+                " /Applications."
+            )
         return ApiAnswer(0, "")
 
 
