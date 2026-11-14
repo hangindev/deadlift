@@ -79,6 +79,8 @@ REFUSED = [
     (["shop", "--server", "bad host"], r"isn't a host name"),
     (["shop", "--server", "deadlift-1", "--branch", "-x"], r"isn't a branch"),
     (["shop", "--server", "deadlift-1", "--image", "Web"], r"isn't an image name"),
+    # As the build action names images, so init never writes a starter build refuses.
+    (["shop", "--server", "deadlift-1", "--image", "1web"], r"isn't an image name"),
 ]
 
 

@@ -143,6 +143,7 @@ from pathlib import Path
 from typing import NoReturn, cast
 
 from deadlift.core.lock import server_lock
+from deadlift.core.names import is_app_name, is_image_name
 from deadlift.core.outcome import Exit, Stop, output, reason
 from deadlift.core.process import Env, Stream, Target, run, scrubbed_env, start
 from deadlift.server import template
@@ -173,8 +174,7 @@ VERSION_FILES = ("compose.yaml", "secrets.env", "vars.env", "override.json", "im
 
 _PERCENT = re.compile(r"100|[1-9]?[0-9]")
 _KEY = re.compile(r"[a-z0-9][a-z0-9-]{0,29}")
-_APP = re.compile(r"[a-z0-9][a-z0-9-]*")
-_IMAGE = re.compile(r"([a-z][a-z0-9_]*)=([a-zA-Z0-9][a-zA-Z0-9._/:@-]*)")
+_IMAGE_REF = re.compile(r"[a-zA-Z0-9][a-zA-Z0-9._/:@-]*")
 
 
 class _Said(Exception):
@@ -1543,14 +1543,15 @@ class App(Server):
         while rest:
             flag = rest[0]
             if flag == "--image":
-                matched = _IMAGE.fullmatch(rest[1] if len(rest) > 1 else "")
-                if matched is None:
+                name, _, ref = (rest[1] if len(rest) > 1 else "").partition("=")
+                if not (is_image_name(name) and _IMAGE_REF.fullmatch(ref)):
                     usage(
-                        "--image needs <name>=<ref>, with a name of lowercase letters, digits and _"
+                        "--image needs <name>=<ref>, with a name of lowercase letters and digits, "
+                        "starting with a letter and joined by single _"
                     )
-                if self.images.get(matched[1]):
-                    usage(f"the image {matched[1]} is given twice")
-                self.images[matched[1]] = matched[2]
+                if self.images.get(name):
+                    usage(f"the image {name} is given twice")
+                self.images[name] = ref
                 rest = rest[2:]
             elif flag == "--keep":
                 if len(rest) < 2:
@@ -1769,7 +1770,7 @@ def _main(argv: Sequence[str]) -> None:
             usage(f"{rest[0]} needs a value")
         values[rest[0].removeprefix("--")] = rest[1]
         rest = rest[2:]
-    if not _APP.fullmatch(values["app"]):
+    if not is_app_name(values["app"]):
         usage("--app needs an App")
     if not values["delivery"] or not Path(values["delivery"]).is_dir():
         usage("--delivery needs the unpacked delivery")

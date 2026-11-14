@@ -12,7 +12,8 @@ from deadlift.cli.app import (
     service_matches,
     service_ports,
 )
-from deadlift.cli.common import Usage, app_name_problem, is_app_name, is_server_name
+from deadlift.cli.common import Usage, is_server_name
+from deadlift.core.names import app_name_problem, is_app_name
 
 
 @pytest.mark.parametrize(

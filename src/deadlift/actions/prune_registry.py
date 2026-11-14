@@ -18,14 +18,13 @@ from dataclasses import dataclass
 from typing import cast
 
 from deadlift.actions import job
+from deadlift.core.names import image_name_problem, is_repository
 from deadlift.core.outcome import Exit, fail, refuse, run_main
 from deadlift.core.process import Env, Stream, run
 
 USAGE = "usage: prune-registry.py [--dry-run] (--keep <versions> | --keep-none) <image>..."
 
 _SEPARATORS = re.compile(r"[,\s]+", re.ASCII)
-_IMAGE = re.compile(r"[a-z0-9]+([._-][a-z0-9]+)*")
-_REPOSITORY = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")
 
 
 @dataclass(frozen=True)
@@ -134,10 +133,11 @@ def _prune(argv: Sequence[str]) -> Exit:
     if not images:
         refuse(USAGE)
     for image in images:
-        if not _IMAGE.fullmatch(image):
-            refuse(f"'{image}' isn't an image name such as web.")
+        problem = image_name_problem(image)
+        if problem is not None:
+            refuse(f"{problem}.")
     repository = os.environ.get("GITHUB_REPOSITORY", "")
-    if not _REPOSITORY.fullmatch(repository):
+    if not is_repository(repository):
         refuse(f"GITHUB_REPOSITORY must be <owner>/<name>, not '{repository}'.")
     # GHCR names an image ghcr.io/<owner>/<repository>/<image>, all lowercase, and its package
     # <repository>/<image>.

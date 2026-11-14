@@ -22,7 +22,6 @@ from typing import cast
 
 from deadlift.cli.common import (
     Exited,
-    app_name_problem,
     is_server_name,
     maintainer_env,
     say,
@@ -30,6 +29,7 @@ from deadlift.cli.common import (
     tell,
     usage,
 )
+from deadlift.core.names import app_name_problem
 from deadlift.core.outcome import OUTPUT_PREFIX, fail
 from deadlift.core.process import NOT_FOUND, Stream, Target, run
 

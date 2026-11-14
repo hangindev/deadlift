@@ -28,7 +28,11 @@ def test_blank_lines_name_no_image() -> None:
     [
         ([], "no image was named"),
         (["", " "], "no image was named"),
-        (["Web"], "'Web' isn't an image name: lowercase letters and digits, joined by single _"),
+        (
+            ["Web"],
+            "'Web' isn't an image name: lowercase letters and digits, starting with a letter,"
+            " joined by single _",
+        ),
         (["web__api"], "'web__api' isn't an image name"),
         (["1web"], "'1web' isn't an image name"),
         (["web", "web context=x"], "the image web is given twice"),

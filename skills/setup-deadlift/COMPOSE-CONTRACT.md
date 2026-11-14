@@ -14,7 +14,7 @@ What an App's `compose.yaml` must hold, and may hold, for deadlift to deploy it.
 
   Every Environment is reached through that service alone. An App with several things to reach puts a proxy of its own in front of them and routes to the proxy.
 - **A healthcheck on the routed service, in the template itself**, not only in its image, and not disabled (`disable: true` or `test: ["NONE"]` are refused). deadlift starts the App with `docker compose up` and waits for the routed service to be healthy; healthy is whatever this check says. Give a slow starter `start_period` and `start_interval`.
-- **Images only, built per commit by CI.** Each image the App builds is named in the workflows (`web` by default) and reaches the template as `${DEADLIFT_IMAGE_<NAME>}`, the name upper-cased: `web` is `${DEADLIFT_IMAGE_WEB}`, `my_worker` is `${DEADLIFT_IMAGE_MY_WORKER}`. Names are lowercase letters and digits joined by single `_`. Public images, such as `postgres:17`, are referenced as usual.
+- **Images only, built per commit by CI.** Each image the App builds is named in the workflows (`web` by default) and reaches the template as `${DEADLIFT_IMAGE_<NAME>}`, the name upper-cased: `web` is `${DEADLIFT_IMAGE_WEB}`, `my_worker` is `${DEADLIFT_IMAGE_MY_WORKER}`. Names are lowercase letters and digits, starting with a letter, joined by single `_`. Public images, such as `postgres:17`, are referenced as usual.
 
 ## Migrations and data
 

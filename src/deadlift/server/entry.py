@@ -30,7 +30,6 @@ what runs as root or where it writes.
 
 import lzma
 import os
-import re
 import shutil
 import tarfile
 import tempfile
@@ -39,6 +38,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import NoReturn
 
+from deadlift.core.names import is_app_name
 from deadlift.core.outcome import Stop, reason
 from deadlift.core.outcome import refuse as stop_refused
 from deadlift.core.process import Stream, run, scrubbed_env
@@ -65,7 +65,7 @@ def app_of(user: str, state: Path) -> str:
     app = user.removeprefix("deadlift-")
     if not (
         user.startswith("deadlift-")
-        and re.fullmatch(r"[a-z0-9][a-z0-9-]*", app)
+        and is_app_name(app)
         and (state / "apps" / app / "app.conf").is_file()
     ):
         refuse(f"'{user or 'nobody'}' isn't the deploy user of an App on this Server")

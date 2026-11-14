@@ -26,8 +26,9 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import NoReturn
 
-from deadlift.cli.common import ROOT, Usage, is_app_name, is_server_name, maintainer_env, say
+from deadlift.cli.common import ROOT, Usage, is_server_name, maintainer_env, say
 from deadlift.cli.common import run_command as _run_command
+from deadlift.core.names import image_name_problem, is_app_name
 from deadlift.core.process import Stream, run
 
 USAGE = "Usage: deadlift init <app> --server <server> [--branch <branch>] [--image <name>]...\n"
@@ -35,8 +36,6 @@ STARTERS = ROOT / "cli" / "starters"
 NAMES = ("deadlift-feature", "deadlift-dev", "deadlift-sweep", "deadlift-rollback")
 
 _BRANCH = re.compile(r"[A-Za-z0-9][A-Za-z0-9._/-]*")
-# As the build action names images.
-_IMAGE = re.compile(r"[a-z0-9]+(_[a-z0-9]+)*")
 _IMAGES_LINE = re.compile(r"( *)@images@")
 _WRITTEN = re.compile(rb"# .* Starter sha256:([0-9a-f]{64})")
 
@@ -156,10 +155,9 @@ def init(argv: Sequence[str]) -> None:
         usage(f"'{branch}' isn't a branch name deadlift init takes: a-z, A-Z, 0-9, ., _, / and -")
     images = images or ["web"]
     for image in images:
-        if not _IMAGE.fullmatch(image):
-            usage(
-                f"'{image}' isn't an image name: lowercase letters and digits, joined by single _"
-            )
+        problem = image_name_problem(image)
+        if problem is not None:
+            usage(problem)
 
     toplevel = run(
         ["git", "rev-parse", "--show-toplevel"],

@@ -49,6 +49,7 @@ from pathlib import Path
 from typing import NoReturn, cast
 
 from deadlift.core.lock import server_lock
+from deadlift.core.names import app_name_problem
 from deadlift.core.outcome import Exit, Stop, fail, output, reason, refuse, run_main
 from deadlift.core.process import Completed, Stream, run, scrubbed_env
 from deadlift.server.layout import layout
@@ -70,8 +71,6 @@ Usage: app remove <app>
 Usage: app status
 """
 
-_APP_NAME = re.compile(r"[a-z]([a-z0-9-]{0,21}[a-z0-9])?")
-_FEATURE_PART = re.compile(r"-feature(-|$)")
 
 # add's settings: each one's form, and what it is when it isn't that.
 _ADD_SETTINGS: dict[str, tuple[re.Pattern[str], str]] = {
@@ -91,27 +90,6 @@ _ADD_SETTINGS: dict[str, tuple[re.Pattern[str], str]] = {
 
 class BadUsage(Exception):
     """The command line is wrong: refused, with the usage."""
-
-
-def app_name_problem(name: str) -> str | None:
-    """Why ``name`` can't be an App's name, or None when it can.
-
-    deadlift uses it in a user name, a Tailscale Service name, a tag and the Compose projects
-    deadlift-<app>-<environment>. A name with a ``-feature`` part could make one App's project the
-    same as another's (deadlift-x-feature-y-dev is App x's feature-y-dev and App x-feature-y's
-    dev), so it's refused too.
-    """
-    if not _APP_NAME.fullmatch(name):
-        return (
-            f"'{name}' isn't an App name: up to 23 of a-z, 0-9 and -, starting with a letter and"
-            " not ending with -"
-        )
-    if _FEATURE_PART.search(name):
-        return (
-            f"'{name}' isn't an App name: a part named feature after a - could clash with another"
-            " App's Feature Environments"
-        )
-    return None
 
 
 def sentence(parts: Sequence[str]) -> str:
