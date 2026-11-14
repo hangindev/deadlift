@@ -84,10 +84,13 @@ jobs:
       - run: uv run pytest
 
   # The delivery tests: deliveries end to end, through the deliver client script, the entry
-  # command and the installed deploy script, against this runner's Docker.
+  # command and the installed deploy script, against this runner's Docker. Both suites run until
+  # the TypeScript one is removed.
   delivery-tests:
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 60
+    env:
+      UV_PYTHON: /usr/bin/python3
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -97,15 +100,20 @@ jobs:
         with:
           node-version: 24.21.0
           cache: pnpm
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: 0.11.26
       - run: pnpm install --frozen-lockfile
+      - run: uv sync --locked
       - run: pnpm test
+      - run: uv run pytest tests/delivery -rs
 
   # The server-setup tests: bootstrap this runner into a Server, for real, with only tailscale
   # faked. Then the delivery tests run on that Server, which proves the firewall and userns-remap
   # hold for an App's containers.
   server-setup-tests:
     runs-on: ubuntu-24.04
-    timeout-minutes: 40
+    timeout-minutes: 60
     env:
       UV_PYTHON: /usr/bin/python3
     steps:
@@ -130,5 +138,9 @@ jobs:
       - run: pnpm test:server-setup
       - name: The delivery tests on the bootstrapped Server
         run: pnpm test
+        env:
+          DEADLIFT_TEST_BOOTSTRAPPED: "true"
+      - name: The delivery tests on the bootstrapped Server (pytest)
+        run: uv run pytest tests/delivery -rs
         env:
           DEADLIFT_TEST_BOOTSTRAPPED: "true"
