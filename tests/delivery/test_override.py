@@ -28,34 +28,34 @@ class Deployed:
     migrate: Container
 
 
-class TestDeadliftsOverride:
-    # The App may use 256 MiB, half a CPU and 200 processes in each container. Its template asks
-    # for more memory for web, and less for migrate.
-    @pytest.fixture(scope="class")
-    def deployed(self, harness: Harness) -> Iterator[Deployed]:
-        server = harness.server(limits=Limits(memory="256m", cpus="0.5", pids=200))
-        app = server.apps["a"].name
-        template = (
-            example_template()
-            .replace(
-                "\n  web:\n    image: ${DEADLIFT_IMAGE_WEB}\n",
-                "\n  web:\n    image: ${DEADLIFT_IMAGE_WEB}\n"
-                "    mem_limit: 4g\n    pids_limit: -1\n",
-                1,
-            )
-            .replace(
-                '    command: ["python3", "migrate.py"]\n',
-                '    command: ["python3", "migrate.py"]\n    mem_limit: 128m\n',
-                1,
-            )
+# The App may use 256 MiB, half a CPU and 200 processes in each container. Its template asks
+# for more memory for web, and less for migrate.
+@pytest.fixture(scope="class")
+def deployed(harness: Harness) -> Iterator[Deployed]:
+    server = harness.server(limits=Limits(memory="256m", cpus="0.5", pids=200))
+    app = server.apps["a"].name
+    template = (
+        example_template()
+        .replace(
+            "\n  web:\n    image: ${DEADLIFT_IMAGE_WEB}\n",
+            "\n  web:\n    image: ${DEADLIFT_IMAGE_WEB}\n    mem_limit: 4g\n    pids_limit: -1\n",
+            1,
         )
-        result = server.deliver(
-            app, ["deploy", "feature-1", "--image", f"web={harness.image()}"], template=template
+        .replace(
+            '    command: ["python3", "migrate.py"]\n',
+            '    command: ["python3", "migrate.py"]\n    mem_limit: 128m\n',
+            1,
         )
-        assert result.outcome == "done", result.output
-        yield Deployed(server, app, inspect(app, "web"), inspect(app, "migrate"))
-        harness.remove_servers()
+    )
+    result = server.deliver(
+        app, ["deploy", "feature-1", "--image", f"web={harness.image()}"], template=template
+    )
+    assert result.outcome == "done", result.output
+    yield Deployed(server, app, inspect(app, "web"), inspect(app, "migrate"))
+    harness.remove_servers()
 
+
+class TestDeadliftsOverride:
     def test_publishes_only_the_routed_service_and_only_on_the_hosts_loopback(
         self, deployed: Deployed
     ) -> None:

@@ -118,30 +118,29 @@ def by_host(targets: list[Target], results: list[str]) -> dict[str, str]:
     return {target.host: result for target, result in zip(targets, results, strict=False)}
 
 
+@pytest.fixture(scope="class")
+def bootstrapped(harness: Harness) -> Iterator[Bootstrapped]:
+    server = harness.server()
+    app = server.apps["a"].name
+    outside_port = 18000 + random.randrange(1000)  # noqa: S311
+    outside_name = secrets.token_hex(3)
+    subprocess.run(
+        ["sudo", "bash", str(OUTSIDE), "up", outside_name, str(outside_port)], check=True
+    )
+    listener = socketserver.ThreadingTCPServer(("0.0.0.0", 0), _AnswerTheHost)  # noqa: S104
+    threading.Thread(target=listener.serve_forever, daemon=True).start()
+    try:
+        result = server.deliver(app, ["deploy", "feature-42", "--image", f"web={harness.image()}"])
+        assert result.outcome == "done", result.output
+        yield Bootstrapped(server, app, listener.server_address[1], outside_port)
+    finally:
+        listener.shutdown()
+        listener.server_close()
+        subprocess.run(["sudo", "bash", str(OUTSIDE), "down", outside_name], check=False)
+
+
 @pytest.mark.skipif(WHY is not None, reason=WHY or "")
 class TestAnAppsContainersOnABootstrappedServer:
-    @pytest.fixture(scope="class")
-    def bootstrapped(self, harness: Harness) -> Iterator[Bootstrapped]:
-        server = harness.server()
-        app = server.apps["a"].name
-        outside_port = 18000 + random.randrange(1000)  # noqa: S311
-        outside_name = secrets.token_hex(3)
-        subprocess.run(
-            ["sudo", "bash", str(OUTSIDE), "up", outside_name, str(outside_port)], check=True
-        )
-        listener = socketserver.ThreadingTCPServer(("0.0.0.0", 0), _AnswerTheHost)  # noqa: S104
-        threading.Thread(target=listener.serve_forever, daemon=True).start()
-        try:
-            result = server.deliver(
-                app, ["deploy", "feature-42", "--image", f"web={harness.image()}"]
-            )
-            assert result.outcome == "done", result.output
-            yield Bootstrapped(server, app, listener.server_address[1], outside_port)
-        finally:
-            listener.shutdown()
-            listener.server_close()
-            subprocess.run(["sudo", "bash", str(OUTSIDE), "down", outside_name], check=False)
-
     def test_cant_reach_any_of_the_hosts_own_addresses(self, bootstrapped: Bootstrapped) -> None:
         addresses = subprocess.run(
             ["ip", "-json", "-4", "address", "show"], capture_output=True, text=True, check=True

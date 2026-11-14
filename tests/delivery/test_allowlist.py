@@ -244,18 +244,19 @@ def container_ids(server: Server, name: str) -> str:
     return "\n".join(sorted(server.running_containers(name).split("\n")))
 
 
-class TestATemplateAdr0001Refuses:
-    @pytest.fixture(scope="class")
-    def running(self, harness: Harness) -> Iterator[Running]:
-        server = harness.server()
-        app = server.apps["a"].name
-        result = server.deliver(
-            app, ["deploy", "feature-1", "--image", f"web={harness.image('healthy', 1)}"]
-        )
-        assert result.outcome == "done", result.output
-        yield Running(server, app, container_ids(server, app))
-        harness.remove_servers()
+@pytest.fixture(scope="class")
+def running(harness: Harness) -> Iterator[Running]:
+    server = harness.server()
+    app = server.apps["a"].name
+    result = server.deliver(
+        app, ["deploy", "feature-1", "--image", f"web={harness.image('healthy', 1)}"]
+    )
+    assert result.outcome == "done", result.output
+    yield Running(server, app, container_ids(server, app))
+    harness.remove_servers()
 
+
+class TestATemplateAdr0001Refuses:
     @pytest.mark.parametrize(
         ("template", "key"),
         [(template, key) for _, template, key in REFUSALS],
