@@ -1,7 +1,9 @@
 """The entry command: what an App's CI can and can't make the Server do, whatever it sends."""
 
+import io
 import re
 import shutil
+import tarfile
 import tempfile
 import time
 from collections.abc import Callable, Iterator
@@ -80,6 +82,41 @@ class TestADeliveryThatIsntATarOfOnlyComposeYamlAndTheToken:
         assert not marker(scratch).exists()
         assert server.containers(app) == ""
         assert server.tailscale_calls() == []
+
+
+def compressed_tar_of(template: bytes, *, owner: str) -> bytes:
+    """A gzipped tar holding `template` as compose.yaml, owned by `owner`: far smaller sent than
+    unpacked."""
+    buffer = io.BytesIO()
+    with tarfile.open(fileobj=buffer, mode="w:gz") as archive:
+        member = tarfile.TarInfo("compose.yaml")
+        member.size = len(template)
+        member.uname = member.gname = owner
+        archive.addfile(member, io.BytesIO(template))
+    return buffer.getvalue()
+
+
+@pytest.mark.parametrize("owner", ["runner", "a b"], ids=["any owner", "an owner with a space"])
+def test_a_delivery_that_unpacks_past_the_limit_is_refused_exit_2_however_its_sent(
+    harness: Harness, owner: str
+) -> None:
+    server = harness.server()
+    app = server.apps["a"].name
+    # 2 MiB of template that gzip makes a few kilobytes.
+    template = example_template().encode() + b"#" * (2 * 1024 * 1024) + b"\n"
+    delivery = compressed_tar_of(template, owner=owner)
+    assert len(delivery) < 1024 * 1024
+
+    result = server.send(
+        f"deadlift-{app}",
+        ["--protocol", "1", "deploy", "feature-1", "--image", f"web={harness.image()}"],
+        delivery,
+    )
+
+    assert result.code == 2, result.output
+    assert matches(r"^deadlift: refused the delivery: it unpacks to over", result.output, re.M)
+    assert server.containers(app) == ""
+    assert list((server.state / "deliveries").iterdir()) == []
 
 
 @dataclass(frozen=True)
