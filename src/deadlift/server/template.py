@@ -56,7 +56,7 @@ import yaml
 
 from deadlift.core.outcome import Exit, Stop, refuse_usage, run_main
 from deadlift.core.process import Env, Stream, run, scrubbed_env
-from deadlift.server.text import jq_text, last_line, read_settings
+from deadlift.server.text import json_text, last_line, read_settings
 
 USAGE = (
     "Usage: template check <dir> <project>\n"
@@ -305,13 +305,13 @@ def _service_problems(
                 source = mount.get("source")
                 if kind == "bind" and "docker.sock" in _string(source if _truthy(source) else ""):
                     found.append(
-                        f"{path} mounts the Docker socket, {jq_text(source)}, which reaches every "
-                        "App on the Server"
+                        f"{path} mounts the Docker socket, {json_text(source)}, which reaches "
+                        "every App on the Server"
                     )
                 elif kind == "bind":
                     found.append(
-                        f"{path} bind-mounts {jq_text(source)} from the Server: only named volumes "
-                        "and tmpfs are allowed"
+                        f"{path} bind-mounts {json_text(source)} from the Server: only named "
+                        "volumes and tmpfs are allowed"
                     )
                 elif kind in ("volume", "tmpfs"):
                     extra = sorted(set(mount) - _MOUNT_KEYS)
@@ -319,7 +319,8 @@ def _service_problems(
                         found.append(f"{path} sets {extra[0]} on a mount: {_why(extra[0])}")
                 else:
                     found.append(
-                        f"{path} mounts a {jq_text(kind)}: only named volumes and tmpfs are allowed"
+                        f"{path} mounts a {json_text(kind)}: only named volumes and tmpfs are "
+                        "allowed"
                     )
         elif key == "volumes_from":
             for entry_value in _array(value):
@@ -375,10 +376,10 @@ def _resource_problems(
     for key, value in _object(resource).items():
         path = f"{kind}.{name}.{key}"
         if key == "name":
-            if kind in ("configs", "secrets") or value == f"{jq_text(project)}_{name}":
+            if kind in ("configs", "secrets") or value == f"{json_text(project)}_{name}":
                 continue
             found.append(
-                f"{path} is {jq_text(value)}: a {single} named outside the project could be "
+                f"{path} is {json_text(value)}: a {single} named outside the project could be "
                 "another App's"
             )
         elif key == "external":
@@ -387,12 +388,12 @@ def _resource_problems(
             found.append(f"{path} is set: driver options can mount the Server's files")
         elif key == "file":
             found.append(
-                f"{path} reads {jq_text(value)} from the Server: only inline content is allowed"
+                f"{path} reads {json_text(value)} from the Server: only inline content is allowed"
             )
         elif key == "driver":
             if value == "local" or (kind == "networks" and value == "bridge"):
                 continue
-            found.append(f"{path} is {jq_text(value)}: only the default driver is allowed")
+            found.append(f"{path} is {json_text(value)}: only the default driver is allowed")
         elif key == "ipam":
             ipam = _object(value)
             config = ipam.get("config")
@@ -516,7 +517,7 @@ def _check_model(text: str) -> Checked:
         _refuse(f"the template's {problem}, and ADR 0001 refuses it")
 
     route_value = _get(config.get("x-deadlift"), "route")
-    route = jq_text(route_value).rstrip("\n") if _truthy(route_value) else ""
+    route = json_text(route_value).rstrip("\n") if _truthy(route_value) else ""
     if not route:
         _refuse(
             "the template has no x-deadlift.route. Name the service deadlift routes to as "
@@ -615,7 +616,7 @@ def override_document(
 ) -> str:
     """deadlift's override for the checked template ``config``, as JSON: each limit the
     template's own where that's set and lower, else the App's."""
-    route = jq_text(_get(config.get("x-deadlift"), "route"))
+    route = json_text(_get(config.get("x-deadlift"), "route"))
     matched = re.search(r"^(.+):([0-9]+)$", route)
     if matched is None:  # pragma: no cover - check() let only <service>:<port> through
         raise ValueError(f"x-deadlift.route is {route!r}")

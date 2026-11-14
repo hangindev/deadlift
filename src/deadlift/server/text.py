@@ -46,7 +46,7 @@ def sentence(names: Sequence[str]) -> str:
     return f"{', '.join(names[:-1])} and {names[-1]}"
 
 
-def jq_text(value: object) -> str:
+def json_text(value: object) -> str:
     """``value`` as ``jq -r`` prints it, or as jq's string interpolation does: a string as it
     is, anything else as compact JSON."""
     if isinstance(value, str):

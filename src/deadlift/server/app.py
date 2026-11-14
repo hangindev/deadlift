@@ -60,7 +60,9 @@ from deadlift.core.outcome import (
     say,
 )
 from deadlift.core.process import Completed, Stream, run, scrubbed_env
+from deadlift.server import host
 from deadlift.server.layout import layout
+from deadlift.server.text import sentence
 
 STATE = layout().state
 ENTRY_COMMAND = Path("/usr/local/sbin/deadlift-entry")
@@ -98,13 +100,6 @@ _ADD_SETTINGS: dict[str, tuple[re.Pattern[str], str]] = {
 
 class BadUsage(Exception):
     """The command line is wrong: refused, with the usage."""
-
-
-def sentence(parts: Sequence[str]) -> str:
-    """Joins ``parts`` as in a sentence: "a", "a and b", "a, b and c"."""
-    if len(parts) < 2:
-        return "".join(parts)
-    return f"{', '.join(parts[:-1])} and {parts[-1]}"
 
 
 def free_port_base(taken: Set[str]) -> int | None:
@@ -426,21 +421,6 @@ def op_secrets(args: Sequence[str]) -> None:
         )
 
 
-def _remove_project(project: str) -> bool:
-    """Removes every container, volume and network of the Compose project ``project``, by
-    Compose's label. Returns whether it all went."""
-    by_project = ["--filter", f"label=com.docker.compose.project={project}"]
-    ids = _docker_lines("container", "ls", "--all", "--quiet", *by_project)
-    removal = ["docker", "container", "rm", "--force", "--volumes", *ids]
-    if ids and not run(removal, env=_ENV, stdout=Stream.DEVNULL).ok:
-        return False
-    ids = _docker_lines("volume", "ls", "--quiet", *by_project)
-    if ids and not run(["docker", "volume", "rm", *ids], env=_ENV, stdout=Stream.DEVNULL).ok:
-        return False
-    ids = _docker_lines("network", "ls", "--quiet", *by_project)
-    return not ids or run(["docker", "network", "rm", *ids], env=_ENV, stdout=Stream.DEVNULL).ok
-
-
 def op_remove(args: Sequence[str]) -> None:
     app = args[0] if args else ""
     _check_app(app)
@@ -483,7 +463,7 @@ def op_remove(args: Sequence[str]) -> None:
         environments = directory / "environments"
         if environments.is_dir():
             projects += [
-                f"deadlift-{app}-{env.name}"
+                host.project_name(app, env.name)
                 for env in sorted(environments.iterdir())
                 if not env.name.startswith(".") and env.is_dir()
             ]
@@ -492,7 +472,7 @@ def op_remove(args: Sequence[str]) -> None:
         projects += _docker_lines("container", "ls", "--all", *by_app)
         projects += _docker_lines("volume", "ls", *by_app)
         for project in sorted(set(projects)):
-            if not _remove_project(project):
+            if not host.remove_project(project, _ENV):
                 fail(
                     f"couldn't remove all of {app}'s containers, volumes and networks (in"
                     f" {project}). Run `deadlift app remove` again"
@@ -526,48 +506,16 @@ def op_remove(args: Sequence[str]) -> None:
             reason(f"{app} isn't on this Server, so there was nothing to remove.")
 
 
-def disk_used() -> int:
-    """The percentage of disk used where the Server keeps its state and Docker its data, the
-    fuller."""
-    directories = [str(STATE)]
-    root = run(
-        ["docker", "info", "--format", "{{.DockerRootDir}}"],
-        env=_ENV,
-        stdout=Stream.CAPTURE,
-        stderr=Stream.DEVNULL,
-    )
-    if root.ok:
-        directories.append(root.stdout.rstrip("\n"))
-    df = run(["df", "-P", *directories], env=_ENV, stdout=Stream.CAPTURE)
-    highest = 0
-    for line in df.stdout.splitlines()[1:]:
-        fields = line.split()
-        if len(fields) >= 5:
-            highest = max(highest, _int(fields[4].replace("%", "", 1)))
-    return highest
-
-
-def _magic_dns_suffix() -> str:
-    status = run(
-        ["tailscale", "status", "--json"],
-        env=_ENV,
-        stdout=Stream.CAPTURE,
-        stderr=Stream.DEVNULL,
-    )
-    parsed = json_object(status.stdout) if status.ok else None
-    suffix = None if parsed is None else parsed.get("MagicDNSSuffix")
-    return suffix.rstrip("\n") if isinstance(suffix, str) else ""
-
-
 def op_status(args: Sequence[str]) -> None:
     if args:
         _usage("status takes no arguments")
-    suffix = _magic_dns_suffix()
+    suffix = host.magic_dns_suffix(_ENV, errors=Stream.DEVNULL)
     settings = STATE / "settings"
     deploy_limit = _setting_of(settings, "feature_deploy_disk_limit")
     watchdog_limit = _setting_of(settings, "watchdog_disk_limit")
+    used = host.disk_used(STATE, _ENV) or 0
     say(
-        f"Disk: {disk_used()}% used. Feature deploys are skipped over {deploy_limit}%, and the"
+        f"Disk: {used}% used. Feature deploys are skipped over {deploy_limit}%, and the"
         f" watchdog stops Feature Environments over {watchdog_limit}%."
     )
     apps = 0
@@ -611,9 +559,9 @@ def op_status(args: Sequence[str]) -> None:
             elif (env_dir / "slot").is_file():
                 slot = _read(env_dir / "slot")
                 url = f"https://{app}.{suffix}:{10000 + _int(slot)}/" if suffix else ""
-            by_project = ["--filter", f"label=com.docker.compose.project=deadlift-{app}-{env}"]
-            total = len(_docker_lines("container", "ls", "--all", "--quiet", *by_project))
-            running = len(_docker_lines("container", "ls", "--quiet", *by_project))
+            project = host.by_project(host.project_name(app, env))
+            total = len(_docker_lines("container", "ls", "--all", "--quiet", *project))
+            running = len(_docker_lines("container", "ls", "--quiet", *project))
             counted = f"{running} of {total} running"
             slotted = f"Slot {slot}" if slot else ""
             say(f"  {env:<36} {counted:<22} {slotted:<8} {url}")

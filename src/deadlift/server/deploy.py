@@ -146,9 +146,9 @@ from deadlift.core.lock import server_lock
 from deadlift.core.names import is_app_name, is_image_name
 from deadlift.core.outcome import Exit, Stop, output, reason, refuse_usage, run_main, say, tell
 from deadlift.core.process import Env, Stream, Target, run, scrubbed_env, start
-from deadlift.server import template
+from deadlift.server import host, template
 from deadlift.server.layout import layout
-from deadlift.server.text import jq_text, last_line, lines, read_settings, sentence
+from deadlift.server.text import json_text, last_line, lines, read_settings, sentence
 
 USAGE = (
     "Usage: deploy --app <app> --delivery <dir> deploy dev|feature-<key> "
@@ -198,19 +198,10 @@ def keep_keys(value: str) -> list[str]:
     return keys
 
 
-def _sort_n_key(text: str) -> tuple[float, str]:
+def _numeric_sort_key(text: str) -> tuple[float, str]:
+    """``sort -n``'s order: by the leading number, then as text."""
     matched = re.match(r"\s*(-?[0-9]*\.?[0-9]+|-?[0-9]+\.?)", text)
     return (float(matched[1]) if matched else 0.0, text)
-
-
-def fullest_disk(df: str) -> str:
-    """The highest percentage used in ``df -P``'s output, as
-    ``awk 'NR > 1 { sub(/%$/, "", $5); print $5 }' | sort -n | tail -n 1`` gives it."""
-    values = [
-        fields[4].removesuffix("%") if len(fields) >= 5 else ""
-        for fields in (line.split() for line in lines(df)[1:])
-    ]
-    return max(values, key=_sort_n_key) if values else ""
 
 
 def _read_text(path: Path) -> str:
@@ -287,23 +278,8 @@ class Server:
         return int(feature), int(watchdog)
 
     def disk_used(self) -> int | None:
-        """How full the disk is, as a whole percentage: the fuller of the filesystems holding
-        the Server's state and Docker's data. The tests' layout replaces the measure. None when
-        it can't be measured."""
-        stand_in = layout().disk_used
-        if stand_in is not None:
-            return _stand_in_disk_used(stand_in)
-        paths = [str(self.state)]
-        _, root = self.docker(
-            "info", "--format", "{{.DockerRootDir}}", stdout=Stream.CAPTURE, stderr=Stream.DEVNULL
-        )
-        root = root.rstrip("\n")
-        if root and Path(root).is_dir():
-            paths.append(root)
-        # POSIX output: the fifth column is the percentage used.
-        df = run(["df", "-P", *paths], env=self.env, stdout=Stream.CAPTURE)
-        used = fullest_disk(df.stdout)
-        return int(used) if re.fullmatch(r"[0-9]+", used) else None
+        """How full the disk is (see :func:`host.disk_used`)."""
+        return host.disk_used(self.state, self.env)
 
     # Ways out. Each prunes first when a deploy has its images to prune, so the reason stays
     # the last line.
@@ -366,7 +342,7 @@ class App(Server):
         self.snapshot = ""
         self.config: dict[str, object] = {}
         self.routed = ""
-        self.discard = False
+        self.discard_newer_data = False
 
     @property
     def environments(self) -> Path:
@@ -405,17 +381,7 @@ class App(Server):
 
     def read_tailnet_suffix(self) -> str:
         """The tailnet's MagicDNS suffix, for the App's address on its Service."""
-        done = run(["tailscale", "status", "--json"], env=self.env, stdout=Stream.CAPTURE)
-        suffix = ""
-        if done.ok:
-            try:
-                status: object = json.loads(done.stdout)
-            except ValueError:
-                status = None
-            if isinstance(status, dict):
-                value = cast(dict[str, object], status).get("MagicDNSSuffix")
-                if value is not None and value is not False:
-                    suffix = jq_text(value).rstrip("\n")
+        suffix = host.magic_dns_suffix(self.env)
         if not suffix:
             self.fail("couldn't read the tailnet's name from Tailscale, so nothing was changed")
         return suffix
@@ -548,7 +514,7 @@ class App(Server):
         deadlift won't run (ADR 0001, ADR 0002)."""
         checked = template.check(directory, self.project)
         self.config = checked.config
-        route = jq_text(cast(dict[str, object], checked.config["x-deadlift"])["route"])
+        route = json_text(cast(dict[str, object], checked.config["x-deadlift"])["route"])
         self.routed = route.rpartition(":")[0] if ":" in route else route
 
     def write_override(self, directory: Path, port: int) -> None:
@@ -592,7 +558,7 @@ class App(Server):
             for service in cast(dict[str, object], services).values():
                 image = cast(dict[str, object], service).get("image")
                 if image is not None and image is not False:
-                    refs.add(jq_text(image))
+                    refs.add(json_text(image))
         pull_env = self.env.with_vars({"DOCKER_CONFIG": str(docker_config)})
         for ref in sorted(refs):
             if (
@@ -621,7 +587,7 @@ class App(Server):
         for slot in sorted(self.environments.glob("feature-*/slot"), key=str):
             if slot.is_file():
                 held.append(f"{_read_text(slot)} {slot.parent.name}")
-        held.sort(key=_sort_n_key)
+        held.sort(key=_numeric_sort_key)
         return [cast(tuple[str, str], tuple(line.partition(" ")[::2])) for line in held]
 
     def holder_of(self, slot: str) -> str:
@@ -668,24 +634,24 @@ class App(Server):
         return f"{before}{sentence(self.swept)}" if "".join(self.swept) else ""
 
     def deploy_feature(self) -> None:
-        nxt = self.delivery / "next"
+        staged = self.delivery / "next"
         directory = self.environments / self.env_name
         if not (self.delivery / "compose.yaml").is_file():
             self.refuse("the delivery has no compose.yaml to deploy")
-        self.project = f"deadlift-{self.app}-{self.env_name}"
+        self.project = host.project_name(self.app, self.env_name)
         self.check_disk_for_feature()
 
-        nxt.mkdir()
-        _copy(self.delivery / "compose.yaml", nxt / "compose.yaml")
+        staged.mkdir()
+        _copy(self.delivery / "compose.yaml", staged / "compose.yaml")
         # The Slot comes first, because the template sees the URL it gives.
         suffix = self.read_tailnet_suffix()
         slot = self.claim_slot()
         port = self.port_base + 10 * slot
         public = 10000 + slot
         url = f"https://{self.app}.{suffix}:{public}/"
-        self.write_variables(nxt, url)
-        self.check_template(nxt)
-        self.write_override(nxt, port)
+        self.write_variables(staged, url)
+        self.check_template(staged)
+        self.write_override(staged, port)
         self.pull_images(again=True)
         # Only now, so a template refused or an image that can't be pulled sweeps nothing.
         if self.keep_given:
@@ -693,7 +659,7 @@ class App(Server):
 
         directory.mkdir(parents=True, exist_ok=True)
         for name in ("compose.yaml", "secrets.env", "vars.env", "secret", "override.json"):
-            _copy(nxt / name, directory / name)
+            _copy(staged / name, directory / name)
         (directory / "slot").write_text(f"{slot}\n")
         say(f"Starting {self.env_name}")
         if not self.start_environment(directory, self.routed):
@@ -782,22 +748,6 @@ class App(Server):
             mapping = cast(dict[str, object], mapping).get(key)
         return mapping is None or mapping is False
 
-    def remove_project(self, project: str) -> bool:
-        """Removes every container, volume and network of the Compose project, by Compose's own
-        label, so it needs neither the template nor its variables."""
-        by_project = ["--filter", f"label=com.docker.compose.project={project}"]
-        for kind, remove in (
-            ("container", ["container", "rm", "--force", "--volumes"]),
-            ("volume", ["volume", "rm"]),
-            ("network", ["network", "rm"]),
-        ):
-            listing = ["container", "ls", "--all"] if kind == "container" else [kind, "ls"]
-            _, listed = self.docker(*listing, "--quiet", *by_project, stdout=Stream.CAPTURE)
-            ids = lines(listed)
-            if ids and not self.docker(*remove, *ids, stdout=Stream.DEVNULL)[0]:
-                return False
-        return True
-
     def destroy_feature(self, env: str) -> None:
         """Destroys the App's Feature Environment ``env``: its Service mapping, its containers,
         volumes and networks, and then its state, which frees its Slot. A destroy that stops
@@ -815,7 +765,7 @@ class App(Server):
                 f"couldn't remove {env}'s address from Tailscale Serve, so {env} was left as it "
                 "was",
             )
-        if not self.remove_project(f"deadlift-{self.app}-{env}"):
+        if not host.remove_project(host.project_name(self.app, env), self.env):
             raise Stop(
                 Exit.FAILED,
                 f"couldn't remove all of {env}'s containers, volumes and networks. It's no "
@@ -1089,20 +1039,20 @@ class App(Server):
             if name != needed:
                 _remove_tree(self.snapshots / name)
 
-    def record_version(self, nxt: Path) -> None:
-        """Records the version in ``nxt``, now running, as Dev's current version. The current
+    def record_version(self, staged: Path) -> None:
+        """Records the version in ``staged``, now running, as Dev's current version. The current
         version before it becomes the previous one, which Rollback goes back to. Deploying the
         current version again, the same template and image references, leaves the previous one
         as it was."""
         dev = self.dev
         if (
             (dev / "compose.yaml").is_file()
-            and _same(dev / "compose.yaml", nxt / "compose.yaml")
-            and _same(dev / "images", nxt / "images")
+            and _same(dev / "compose.yaml", staged / "compose.yaml")
+            and _same(dev / "images", staged / "images")
         ):
-            _copy(dev / "snapshot", nxt / "snapshot")
+            _copy(dev / "snapshot", staged / "snapshot")
         else:
-            (nxt / "snapshot").write_text(f"{self.snapshot}\n")
+            (staged / "snapshot").write_text(f"{self.snapshot}\n")
             if (dev / "compose.yaml").is_file():
                 aside = dev / "previous.new"
                 _remove_tree(aside)
@@ -1113,7 +1063,7 @@ class App(Server):
                 _remove_tree(dev / "previous")
                 aside.rename(dev / "previous")
         for name in (*VERSION_FILES, "secret"):
-            _copy(nxt / name, dev / f"{name}.new")
+            _copy(staged / name, dev / f"{name}.new")
             (dev / f"{name}.new").rename(dev / name)
 
     def recover_dev(self, why_text: str, url: str) -> NoReturn:
@@ -1150,21 +1100,21 @@ class App(Server):
         and the root of its Service. Nothing stops until the template is checked and every image
         is pulled. Then Dev stops, a Volume Snapshot is taken, and the new version starts. If it
         doesn't, Recovery puts back the snapshot and the previous version."""
-        nxt = self.delivery / "next"
+        staged = self.delivery / "next"
         if not (self.delivery / "compose.yaml").is_file():
             self.refuse("the delivery has no compose.yaml to deploy")
-        self.project = f"deadlift-{self.app}-dev"
+        self.project = host.project_name(self.app, "dev")
         port = self.port_base
 
-        nxt.mkdir()
-        _copy(self.delivery / "compose.yaml", nxt / "compose.yaml")
-        (nxt / "images").write_text(
+        staged.mkdir()
+        _copy(self.delivery / "compose.yaml", staged / "compose.yaml")
+        (staged / "images").write_text(
             "".join(f"{line}\n" for line in sorted(f"{n}={r}" for n, r in self.images.items()))
         )
         url = f"https://{self.app}.{self.read_tailnet_suffix()}/"
-        self.write_variables(nxt, url)
-        self.check_template(nxt)
-        self.write_override(nxt, port)
+        self.write_variables(staged, url)
+        self.check_template(staged)
+        self.write_override(staged, port)
         self.pull_images(again=True)
         self.pull_snapshot_image()
 
@@ -1196,9 +1146,9 @@ class App(Server):
         # Whatever happens from here, the snapshot just taken counts toward the App's number, so
         # a run of failed deploys doesn't fill the disk.
         try:
-            if not self.start_environment(nxt, self.routed):
+            if not self.start_environment(staged, self.routed):
                 self.recover_dev(last_line(self.up_log), url)
-            self.record_version(nxt)
+            self.record_version(staged)
         finally:
             self.prune_snapshots()
         if not self.serve(443, port):
@@ -1374,7 +1324,7 @@ class App(Server):
         that fails too, today's data and the current version go back."""
         dev = self.dev
         previous = dev / "previous"
-        self.project = f"deadlift-{self.app}-dev"
+        self.project = host.project_name(self.app, "dev")
         if not (dev / "compose.yaml").is_file():
             self.refuse("dev hasn't been deployed, so there's nothing to roll back")
         if not (previous / "compose.yaml").is_file():
@@ -1408,7 +1358,7 @@ class App(Server):
         self.config = cast(dict[str, object], json.loads(done.stdout))
         self.pull_images(again=False)
         before = ""
-        if self.discard:
+        if self.discard_newer_data:
             if (dev / "snapshot").is_file():
                 before = _read_text(dev / "snapshot")
             if not (before and (self.snapshots / before).is_dir()):
@@ -1442,7 +1392,7 @@ class App(Server):
         why = last_line(self.up_log)
         self.project_containers("stop")
 
-        if not self.discard:
+        if not self.discard_newer_data:
             say("Starting dev's current version again")
             if not self.restart_version(dev):
                 self.project_containers("stop")
@@ -1568,7 +1518,7 @@ class App(Server):
         for flag in args[1:]:
             if flag != "--discard-newer-data":
                 usage(f"unknown argument '{flag}' for rollback")
-            self.discard = True
+            self.discard_newer_data = True
         if self.env_name.startswith("feature-"):
             self.check_feature_key()
             self.refuse(
@@ -1671,7 +1621,7 @@ class Watchdog(Server):
             "ls",
             "--quiet",
             "--filter",
-            f"label=com.docker.compose.project=deadlift-{app}-{env}",
+            f"label=com.docker.compose.project={host.project_name(app, env)}",
             stdout=Stream.CAPTURE,
         )
         if not ok:
@@ -1717,15 +1667,6 @@ class Watchdog(Server):
             "watchdog stopped every Feature Environment on the Server. Each starts again on its "
             "next deploy, and every Dev Environment is still running"
         )
-
-
-def _stand_in_disk_used(path: Path) -> int | None:
-    """How full the tests' fake Server's disk is, from the file their layout names."""
-    try:
-        text = path.read_text().strip()
-    except OSError:
-        return None
-    return int(text) if _PERCENT.fullmatch(text) else None
 
 
 def _main(argv: Sequence[str]) -> None:
