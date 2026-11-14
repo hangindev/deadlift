@@ -22,7 +22,8 @@
 #     now and by deadlift-firewall.service at every boot before Docker starts (see firewall.sh).
 #   - The entry command, /usr/local/sbin/deadlift-entry, and the deploy script it runs,
 #     /usr/local/lib/deadlift/deploy.sh, with the template check, template.sh, beside it, all
-#     owned by root. `deadlift app add` gives each App's deploy user one sudo rule for the entry
+#     owned by root: launchers for deadlift's Python, installed under /usr/local/lib/deadlift/python
+#     (ADR 0004). `deadlift app add` gives each App's deploy user one sudo rule for the entry
 #     command. jq, and python3 with PyYAML, which they use.
 #   - The Server half of `deadlift app add`, `app secrets`, `app remove` and `server status`,
 #     /usr/local/lib/deadlift/app.sh, which the maintainer runs over SSH as root.
@@ -112,7 +113,7 @@ install_prerequisites() {
   for tool in jq curl; do
     command -v "$tool" >/dev/null || missing+=("$tool")
   done
-  # PyYAML, for template.sh to read a template's YAML before Compose does.
+  # PyYAML, for the template check to read a template's YAML before Compose does.
   python3 -I -c 'import yaml' 2>/dev/null || missing+=(python3 python3-yaml)
   if ((${#missing[@]})); then apt_install ca-certificates "${missing[@]}"; fi
   echo "jq, curl and python3 with PyYAML are installed"
@@ -174,12 +175,11 @@ installed_or_kept() {
 
 install_scripts() {
   install -d -m 0755 -o root -g root "$lib"
-  install_file 0755 "$here/entry.sh" "$entry_command"
-  echo "$(installed_or_kept) the entry command, $entry_command"
-  install_file 0755 "$here/deploy.sh" "$lib/deploy.sh"
-  echo "$(installed_or_kept) the deploy script, $lib/deploy.sh"
-  install_file 0755 "$here/template.sh" "$lib/template.sh"
-  echo "$(installed_or_kept) the template check beside it, $lib/template.sh"
+  # The Server's Python, under $lib/python, and a launcher for each entry point at its old path
+  # (ADR 0004). It compares first, as install_file does.
+  python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); from deadlift.bootstrap.install import main; sys.exit(main(sys.argv[2:]))' \
+    "$here" --lib "$lib" --sbin "$(dirname "$entry_command")"
+  echo "Installed the entry command, $entry_command, the deploy script, $lib/deploy.sh, and the template check beside it, $lib/template.sh"
   install_file 0755 "$here/app.sh" "$lib/app.sh"
   echo "$(installed_or_kept) the Server half of \`deadlift app\` and \`server status\`, $lib/app.sh"
   install_file 0755 "$here/firewall.sh" "$lib/firewall.sh"
@@ -282,8 +282,9 @@ WantedBy=timers.target"
 }
 
 [[ $EUID -eq 0 ]] || refuse "bootstrap needs root"
-for file in entry.sh deploy.sh template.sh firewall.sh app.sh; do
-  [[ -r $here/$file ]] || refuse "$file isn't beside bootstrap.sh. Run it through \`deadlift server bootstrap\`, which sends all of server/"
+for file in firewall.sh app.sh deadlift/bootstrap/install.py deadlift/server/entry.py \
+  deadlift/server/deploy.py deadlift/server/template.py; do
+  [[ -r $here/$file ]] || refuse "$file isn't beside bootstrap.sh. Run it through \`deadlift server bootstrap\`, which sends all of server/ and deadlift's Python"
 done
 # shellcheck source=/dev/null
 [[ $(. /etc/os-release && echo "$ID") == ubuntu ]] || refuse "a Server runs Ubuntu 24.04, and this isn't Ubuntu"

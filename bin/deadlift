@@ -15,8 +15,9 @@
 #                     joining the tailnet and closing public SSH. Stop it any time and run it
 #                     again to carry on (see cli/provision.sh).
 #   server bootstrap  Turns <server>, a fresh Ubuntu 24.04 machine or a Server already, into an up
-#                     to date Server. It sends this checkout's server/ over SSH as root and runs
-#                     its bootstrap.sh there (see it for what it sets up). Safe to run again: a
+#                     to date Server. It sends this checkout's server/, with the Server's
+#                     Python from src/deadlift, over SSH as root and runs its bootstrap.sh
+#                     there (see it for what it sets up). Safe to run again: a
 #                     run with nothing to do changes nothing. <server> is anything `ssh root@`
 #                     takes: the machine's public address before it joins the tailnet, its
 #                     tailnet name after.
@@ -186,7 +187,9 @@ server_bootstrap() {
   echo "Bootstrapping $server"
   # COPYFILE_DISABLE keeps macOS tar from adding ._ files. Commands on the Server read nothing from
   # the maintainer's terminal: stdin is the tar.
-  COPYFILE_DISABLE=1 tar -C "$root/server" -cf - . |
+  # server/ at the top, with deadlift's Python for the Server beside it, as deadlift/ (ADR 0004).
+  COPYFILE_DISABLE=1 tar -cf - --exclude __pycache__ -C "$root/server" . -C "$root/src" \
+    deadlift/__init__.py deadlift/core deadlift/server deadlift/bootstrap |
     ssh -o StrictHostKeyChecking=accept-new "root@$server" \
       'd=$(mktemp -d) && tar -xf - -C "$d" --no-same-owner && "$d/bootstrap.sh"; s=$?; rm -rf "$d"; exit $s' ||
     status=$?
