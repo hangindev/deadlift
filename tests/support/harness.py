@@ -459,7 +459,7 @@ class Server:
                 f"PATH={self.bin}:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
                 *docker_host,
                 *settings,
-                str(self.lib / "deploy.sh"),
+                str(self.lib / "deploy"),
                 "watchdog",
             ],
             env={},

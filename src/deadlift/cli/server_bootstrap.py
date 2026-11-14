@@ -1,10 +1,9 @@
 """`deadlift server bootstrap <server>`: turns <server>, a fresh Ubuntu 24.04 machine or a Server
 already, into an up to date Server. It sends this checkout's Server code (the Python packages
-deadlift.core, deadlift.server and deadlift.bootstrap, and, while the port to Python is under way,
-the scripts still in server/) over SSH as root, and runs deadlift.bootstrap.bootstrap there (see
-it for what it sets up). Safe to run again: a run with nothing to do changes nothing. <server> is
-anything `ssh root@` takes: the machine's public address before it joins the tailnet, its tailnet
-name after.
+deadlift.core, deadlift.server and deadlift.bootstrap) over SSH as root, and runs
+deadlift.bootstrap.bootstrap there (see it for what it sets up). Safe to run again: a run with
+nothing to do changes nothing. <server> is anything `ssh root@` takes: the machine's public
+address before it joins the tailnet, its tailnet name after.
 
 Exit codes: 0 done, 1 failed (or couldn't reach the Server), 2 refused or bad usage (nothing was
 changed). Otherwise, bootstrap's own exit code on the Server.
@@ -59,11 +58,6 @@ def _sent_files(checkout: Path) -> list[tuple[Path, str]]:
             (path, f"deadlift/{path.relative_to(source).as_posix()}")
             for path in sorted((source / package).rglob("*.py"))
             if "__pycache__" not in path.parts
-        ]
-    scripts = checkout / "server"
-    if scripts.is_dir():
-        files += [
-            (path, f"server/{path.name}") for path in sorted(scripts.iterdir()) if path.is_file()
         ]
     return files
 

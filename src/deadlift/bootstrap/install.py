@@ -46,9 +46,8 @@ class Launcher:
     description: str
 
 
-# Every entry point a Server has. A port of a Server script adds its line here (and bootstrap
-# installs it), keeping the installed path the Bash script had, so whatever calls it (the entry
-# command, sudo's rule, systemd, `deadlift app` over SSH) doesn't change.
+# Every entry point a Server has. Bootstrap installs each, and whatever calls one (sudo's rule,
+# the entry command, the deploy script, systemd, `deadlift app` over SSH) names it by its path.
 LAUNCHERS: tuple[Launcher, ...] = (
     Launcher(
         "sbin",
@@ -58,31 +57,48 @@ LAUNCHERS: tuple[Launcher, ...] = (
     ),
     Launcher(
         "lib",
-        "deploy.sh",
+        "deploy",
         "deadlift.server.deploy",
         "deadlift's deploy script: runs one operation on one App's Environments, or the watchdog.",
     ),
     Launcher(
         "lib",
-        "template.sh",
+        "template",
         "deadlift.server.template",
         "deadlift's template check: what an App's Compose template may hold (ADR 0001).",
     ),
     Launcher(
         "lib",
-        "app.sh",
+        "app",
         "deadlift.server.app",
         "deadlift's App administration on a Server: the Server half of `deadlift app` and"
         " `server status`.",
     ),
     Launcher(
         "lib",
-        "firewall.sh",
+        "firewall",
         "deadlift.server.firewall",
         "deadlift's firewall for containers (ADR 0001), run by bootstrap and"
         " deadlift-firewall.service.",
     ),
 )
+
+
+# What earlier versions installed in the lib directory, under names deadlift no longer uses:
+# the entry points there had a .sh suffix, from when they were Bash. Bootstrap removes them.
+RETIRED_LAUNCHERS = ("deploy.sh", "template.sh", "app.sh", "firewall.sh")
+
+
+def remove_retired_launchers(lib: Path) -> list[Path]:
+    """Removes each of :data:`RETIRED_LAUNCHERS` from ``lib``, and nothing else. Returns the ones
+    it removed."""
+    removed: list[Path] = []
+    for name in RETIRED_LAUNCHERS:
+        path = lib / name
+        if path.is_file() or path.is_symlink():
+            path.unlink()
+            removed.append(path)
+    return removed
 
 
 def launcher_source(module: str, *, modules: Path, description: str) -> str:

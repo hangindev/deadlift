@@ -1,13 +1,13 @@
 """deadlift's App administration on a Server: the Server half of `deadlift app add`, `app secrets`,
 `app remove` and `server status`. Bootstrap installs its launcher, owned by root, at
-/usr/local/lib/deadlift/app.sh, and the maintainer's `deadlift` runs it over SSH as root. No App's
+/usr/local/lib/deadlift/app, and the maintainer's `deadlift` runs it over SSH as root. No App's
 CI can run it: a deploy user's one sudo rule is for the entry command only.
 
 Usage:
-  app.sh add <app> [--slots <n>] [--snapshots <n>] [--memory <size>] [--cpus <n>] [--pids <n>]
-  app.sh secrets <app> dev|feature
-  app.sh remove <app>
-  app.sh status
+  app add <app> [--slots <n>] [--snapshots <n>] [--memory <size>] [--cpus <n>] [--pids <n>]
+  app secrets <app> dev|feature
+  app remove <app>
+  app status
 
 add      Gives the App its place on the Server, or brings it up to date, changing only what's
          missing or different, so running it again with the same settings changes nothing:
@@ -63,10 +63,10 @@ DEFAULT_SLOTS = "3"
 DEFAULT_SNAPSHOTS = "3"
 
 USAGE = """\
-Usage: app.sh add <app> [--slots <n>] [--snapshots <n>] [--memory <size>] [--cpus <n>] [--pids <n>]
-Usage: app.sh secrets <app> dev|feature
-Usage: app.sh remove <app>
-Usage: app.sh status
+Usage: app add <app> [--slots <n>] [--snapshots <n>] [--memory <size>] [--cpus <n>] [--pids <n>]
+Usage: app secrets <app> dev|feature
+Usage: app remove <app>
+Usage: app status
 """
 
 _APP_NAME = re.compile(r"[a-z]([a-z0-9-]{0,21}[a-z0-9])?")
@@ -648,7 +648,7 @@ def op_status(args: Sequence[str]) -> None:
 
 def _main(argv: Sequence[str]) -> None:
     if os.geteuid() != 0:
-        _refuse("app.sh needs root")
+        _refuse("app needs root")
     command = argv[0] if argv else ""
     match command:
         case "add":

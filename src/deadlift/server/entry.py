@@ -183,7 +183,7 @@ def _deliver(app: str, delivery: Path, lib: Path, rest: Sequence[str]) -> int:
 
     # Not exec, so the delivery is removed afterwards.
     done = run(
-        [str(lib / "deploy.sh"), "--app", app, "--delivery", str(files), *rest],
+        [str(lib / "deploy"), "--app", app, "--delivery", str(files), *rest],
         env=scrubbed_env(keep=DEPLOY_ENV),
         stdout=Stream.INHERIT,
     )

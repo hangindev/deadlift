@@ -1,11 +1,11 @@
 """deadlift's template check: what an App's Compose template may hold (ADR 0001), and the override
 deadlift adds to it. Bootstrap installs it on the Server beside the deploy script, owned by root,
-at /usr/local/lib/deadlift/template.sh, and only the deploy script runs it. It never starts,
+at /usr/local/lib/deadlift/template, and only the deploy script runs it. It never starts,
 stops or changes anything: it reads a template and prints JSON.
 
 Usage:
-  template.sh check <dir> <project>
-  template.sh override <dir> <project> --port <port> --app <app> --environment <env>
+  template check <dir> <project>
+  template override <dir> <project> --port <port> --app <app> --environment <env>
       --limits <app.conf>
 
   <dir>      Holds compose.yaml, the App's template, and the variables it's deployed with:
@@ -59,8 +59,8 @@ from deadlift.core.process import Env, Stream, run, scrubbed_env
 from deadlift.server.text import jq_text, last_line, read_settings
 
 USAGE = (
-    "Usage: template.sh check <dir> <project>\n"
-    "Usage: template.sh override <dir> <project> --port <port> --app <app> "
+    "Usage: template check <dir> <project>\n"
+    "Usage: template override <dir> <project> --port <port> --app <app> "
     "--environment <env> --limits <app.conf>\n"
 )
 
@@ -709,7 +709,7 @@ def _main(argv: Sequence[str]) -> None:
 
 def say_unchecked(error: Unchecked) -> None:
     """Says why a template couldn't be checked, as the Bash script's jq did: no reason line."""
-    sys.stderr.write(f"template.sh: error: {error}\n")
+    sys.stderr.write(f"template: error: {error}\n")
     sys.stderr.flush()
 
 

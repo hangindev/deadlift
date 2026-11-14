@@ -1,7 +1,7 @@
 """deadlift's bootstrap: turns a fresh Ubuntu 24.04 machine into a Server. `deadlift server
 bootstrap <server>` sends it over SSH with the rest of deadlift's Server code and runs it as root,
 so you rarely run it yourself. By hand, as root, with <dir> holding what that command sends
-(deadlift/, and server/ while some of the Server's scripts are still Bash):
+(deadlift/):
 
   python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); \\
     from deadlift.bootstrap.bootstrap import main; sys.exit(main(sys.argv[1:]))' <dir>
@@ -22,19 +22,22 @@ What it sets up:
   - deadlift's Server code, the Python package deadlift with its core and server parts, owned by
     root at /usr/local/lib/deadlift/python, and a launcher for each of its entry points (ADR
     0004). python3 with PyYAML, which they use.
-  - The firewall for containers, at /usr/local/lib/deadlift/firewall.sh, applied now and by
+  - The firewall for containers, at /usr/local/lib/deadlift/firewall, applied now and by
     deadlift-firewall.service at every boot before Docker starts (see deadlift.server.firewall).
   - The entry command, /usr/local/sbin/deadlift-entry, and the deploy script it runs,
-    /usr/local/lib/deadlift/deploy.sh, with the template check, template.sh, beside it, all
+    /usr/local/lib/deadlift/deploy, with the template check, template, beside it, all
     owned by root. `deadlift app add` gives each App's deploy user one sudo rule for the entry
     command.
   - The Server half of `deadlift app add`, `app secrets`, `app remove` and `server status`,
-    /usr/local/lib/deadlift/app.sh, which the maintainer runs over SSH as root.
+    /usr/local/lib/deadlift/app, which the maintainer runs over SSH as root.
   - /srv/deadlift, only for root: the Server's lock, the Server registry (apps/) and the
     Server-wide settings (settings, below).
-  - The watchdog's timer, deadlift-watchdog.timer, which runs `deploy.sh watchdog` every 5
+  - The watchdog's timer, deadlift-watchdog.timer, which runs `deploy watchdog` every 5
     minutes (deadlift-watchdog.service): over the upper disk threshold, it stops every Feature
     Environment on the Server and leaves every Dev Environment running.
+
+What earlier versions installed and deadlift no longer uses is removed: the entry points in
+/usr/local/lib/deadlift by their old names, deploy.sh, template.sh, app.sh and firewall.sh.
 
 The Server-wide settings, in /srv/deadlift/settings, one `name=value` a line. A setting missing
 from the file is added with its default; one already set is never changed, so edit the file to
@@ -68,6 +71,7 @@ from deadlift.bootstrap.install import (
     install_launchers,
     install_package,
     python_dir,
+    remove_retired_launchers,
 )
 from deadlift.core.lock import server_lock
 from deadlift.core.outcome import fail, refuse, run_main
@@ -80,17 +84,12 @@ WATCHDOG_UNIT = Path("/etc/systemd/system/deadlift-watchdog")
 OS_RELEASE = Path("/etc/os-release")
 SETTINGS_DEFAULTS = ("feature_deploy_disk_limit=80", "watchdog_disk_limit=90")
 
-# The Server's scripts still in Bash while the port to Python is under way, sent in server/
-# beside deadlift/, and where each is installed. A script's port adds its Launcher at the same
-# path, which then wins, and drops its line here.
-BASH_SCRIPTS: tuple[tuple[str, Path], ...] = ()
-
 # What each installed entry point is, for the log. One with no line here is installed quietly.
 INSTALLED_WHAT: dict[Path, str] = {
     SERVER_SBIN / "deadlift-entry": "the entry command",
-    SERVER_LIB / "deploy.sh": "the deploy script",
-    SERVER_LIB / "template.sh": "the template check beside it",
-    SERVER_LIB / "app.sh": "the Server half of `deadlift app` and `server status`",
+    SERVER_LIB / "deploy": "the deploy script",
+    SERVER_LIB / "template": "the template check beside it",
+    SERVER_LIB / "app": "the Server half of `deadlift app` and `server status`",
 }
 
 SETTINGS_HEADER = """\
@@ -330,12 +329,6 @@ def install_scripts(payload: Path) -> None:
     _install_dir(SERVER_LIB, 0o755)
     changed = install_package(payload / "deadlift", SERVER_LIB, chown=True)
     _say(f"{_installed_or_kept(changed)} deadlift's Server code, {python_dir(SERVER_LIB)}")
-    launched = {_launcher_path(launcher) for launcher in LAUNCHERS}
-    for name, target in BASH_SCRIPTS:
-        if target in launched:
-            continue
-        content = (payload / "server" / name).read_bytes()
-        _log_installed(install_bytes(content, target, 0o755, chown=True), target)
     for launcher in LAUNCHERS:
         target = _launcher_path(launcher)
         changed = install_launchers((launcher,), lib=SERVER_LIB, sbin=SERVER_SBIN, chown=True)
@@ -351,7 +344,7 @@ def start_and_enable(unit: str) -> None:
 
 
 def setup_firewall() -> None:
-    firewall = SERVER_LIB / "firewall.sh"
+    firewall = SERVER_LIB / "firewall"
     changed = _install_content(
         f"""[Unit]
 Description=deadlift's firewall for containers, before Docker starts any (ADR 0001)
@@ -420,7 +413,7 @@ def setup_state() -> None:
 
 
 def setup_watchdog() -> None:
-    """The watchdog, `deploy.sh watchdog`, run by a timer every 5 minutes: over the upper disk
+    """The watchdog, `deploy watchdog`, run by a timer every 5 minutes: over the upper disk
     threshold, it stops every Feature Environment on the Server."""
     service = _install_content(
         f"""[Unit]
@@ -430,7 +423,7 @@ After=docker.service
 
 [Service]
 Type=oneshot
-ExecStart={SERVER_LIB / "deploy.sh"} watchdog""",
+ExecStart={SERVER_LIB / "deploy"} watchdog""",
         WATCHDOG_UNIT.with_name(f"{WATCHDOG_UNIT.name}.service"),
         0o644,
     )
@@ -457,9 +450,14 @@ def _required(payload: Path) -> list[Path]:
     """What bootstrap needs from ``payload``, relative to it."""
     needed = [Path("deadlift/__init__.py")]
     needed += [Path(*launcher.module.split(".")).with_suffix(".py") for launcher in LAUNCHERS]
-    launched = {_launcher_path(launcher) for launcher in LAUNCHERS}
-    needed += [Path("server", name) for name, target in BASH_SCRIPTS if target not in launched]
     return needed
+
+
+def remove_retired() -> None:
+    """Removes what earlier versions installed and deadlift no longer uses. Last, once the
+    units name the launchers by their new paths, so nothing runs an old one in between."""
+    for path in remove_retired_launchers(SERVER_LIB):
+        _say(f"Removed {path}, which deadlift no longer uses")
 
 
 def _main(argv: Sequence[str]) -> None:
@@ -501,6 +499,7 @@ def _main(argv: Sequence[str]) -> None:
         setup_state()
         _step("Installing the watchdog's timer")
         setup_watchdog()
+        remove_retired()
 
     _say("deadlift: this machine is a Server, bootstrapped and up to date.")
 

@@ -46,15 +46,6 @@ def test_sends_nothing_a_server_doesnt_run(tmp_path: Path) -> None:
     }
 
 
-def test_sends_the_servers_scripts_still_in_bash(tmp_path: Path) -> None:
-    (tmp_path / "src/deadlift").mkdir(parents=True)
-    (tmp_path / "src/deadlift/__init__.py").write_text("")
-    (tmp_path / "server").mkdir()
-    (tmp_path / "server/entry.sh").write_text("#!/usr/bin/env bash\n")
-
-    assert sent_names(tmp_path) == {"deadlift/__init__.py", "server/entry.sh"}
-
-
 def test_sends_files_owned_by_no_one_in_particular() -> None:
     with tarfile.open(fileobj=io.BytesIO(server_bootstrap.payload(CHECKOUT))) as tar:
         owners = {(member.uid, member.gid, member.uname, member.gname) for member in tar}
