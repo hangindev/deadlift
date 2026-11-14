@@ -1203,10 +1203,14 @@ class App(Server):
             )
 
         say("Starting dev")
-        if not self.start_environment(nxt, self.routed):
-            self.recover_dev(last_line(self.up_log), url)
-        self.record_version(nxt)
-        self.prune_snapshots()
+        # Whatever happens from here, the snapshot just taken counts toward the App's number, so
+        # a run of failed deploys doesn't fill the disk.
+        try:
+            if not self.start_environment(nxt, self.routed):
+                self.recover_dev(last_line(self.up_log), url)
+            self.record_version(nxt)
+        finally:
+            self.prune_snapshots()
         if not self.serve(443, port):
             self.fail(f"dev is up on its new version, but Tailscale Serve couldn't map it at {url}")
 
@@ -1478,42 +1482,45 @@ class App(Server):
                 "Snapshot of today's data couldn't be taken, so nothing was discarded. Dev is up "
                 f"on its current version, at {url}"
             )
-        say(f"Putting back the Volume Snapshot from before dev's current version, {before}")
-        self.project_containers("rm", "--force")
-        if not self.restore_snapshot(before):
-            why = (
-                f"the Volume Snapshot from before the current version, {before}, couldn't be put "
-                "back"
-            )
-        elif not self.start_environment(previous, routed):
-            why = (
-                "it didn't start on the data from before the current version either: "
-                f"{last_line(self.up_log)}"
-            )
-        else:
-            self.promote_previous()
-            self.prune_snapshots()
-            output("environment", "dev")
-            output("url", url)
-            tell(
-                "deadlift: rolled dev back to its previous version, on its data from before the "
-                f"current version, which is up at {url}. Today's data is kept in the Volume "
-                f"Snapshot {self.snapshot}"
-            )
-            return
-        say("Putting back today's data and dev's current version")
-        self.project_containers("rm", "--force")
-        if not self.restore_snapshot(self.snapshot) or not self.restart_version(dev):
-            self.project_containers("stop")
+        # Today's snapshot counts toward the App's number from here, whatever happens.
+        try:
+            say(f"Putting back the Volume Snapshot from before dev's current version, {before}")
+            self.project_containers("rm", "--force")
+            if not self.restore_snapshot(before):
+                why = (
+                    f"the Volume Snapshot from before the current version, {before}, couldn't be "
+                    "put back"
+                )
+            elif not self.start_environment(previous, routed):
+                why = (
+                    "it didn't start on the data from before the current version either: "
+                    f"{last_line(self.up_log)}"
+                )
+            else:
+                self.promote_previous()
+                output("environment", "dev")
+                output("url", url)
+                tell(
+                    "deadlift: rolled dev back to its previous version, on its data from before "
+                    f"the current version, which is up at {url}. Today's data is kept in the "
+                    f"Volume Snapshot {self.snapshot}"
+                )
+                return
+            say("Putting back today's data and dev's current version")
+            self.project_containers("rm", "--force")
+            if not self.restore_snapshot(self.snapshot) or not self.restart_version(dev):
+                self.project_containers("stop")
+                self.fail(
+                    f"dev's previous version didn't start on today's data, and {why}. Putting back "
+                    "today's data and the current version failed too, so Dev is stopped. Today's "
+                    f"data is in the Volume Snapshot {self.snapshot}"
+                )
             self.fail(
-                f"dev's previous version didn't start on today's data, and {why}. Putting back "
-                "today's data and the current version failed too, so Dev is stopped. Today's "
-                f"data is in the Volume Snapshot {self.snapshot}"
+                f"dev's previous version didn't start on today's data, and {why}. Nothing was "
+                f"rolled back: Dev is up on its current version again, with today's data, at {url}"
             )
-        self.fail(
-            f"dev's previous version didn't start on today's data, and {why}. Nothing was rolled "
-            f"back: Dev is up on its current version again, with today's data, at {url}"
-        )
+        finally:
+            self.prune_snapshots()
 
     # The operations.
 
