@@ -254,16 +254,22 @@ export async function startHarness() {
     for (const d of [state, bin, clientBin, sbin, lib, join(dir, "home")]) {
       await mkdir(d, { recursive: true });
     }
-    await copyFile(join(repo, "server/entry.sh"), join(sbin, "deadlift-entry"));
-    await copyFile(join(repo, "server/deploy.sh"), join(lib, "deploy.sh"));
-    await copyFile(join(repo, "server/template.sh"), join(lib, "template.sh"));
+    // The Server's Python and its launchers, as bootstrap installs them (ADR 0004).
+    await run("python3", [
+      "-I",
+      "-c",
+      "import sys; sys.path.insert(0, sys.argv[1]); from deadlift.bootstrap.install import main; sys.exit(main(sys.argv[2:]))",
+      join(repo, "src"),
+      "--lib",
+      lib,
+      "--sbin",
+      sbin,
+      "--no-chown",
+    ]);
     await copyFile(join(fakes, "sudo"), join(bin, "sudo"));
     await copyFile(join(fakes, "tailscale"), join(bin, "tailscale"));
     await copyFile(join(fakes, "ssh"), join(clientBin, "ssh"));
     for (const file of [
-      join(sbin, "deadlift-entry"),
-      join(lib, "deploy.sh"),
-      join(lib, "template.sh"),
       join(bin, "sudo"),
       join(bin, "tailscale"),
       join(clientBin, "ssh"),
