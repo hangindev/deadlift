@@ -105,9 +105,14 @@ async function portBlock(app: string): Promise<[number, number]> {
 async function deliverDev(app: string, template: string): Promise<Result> {
   const job = await mkdtemp(join(work, "job-"));
   await writeFile(join(job, "compose.yaml"), template);
+  // As the deliver action runs it.
   const result = await run(
-    join(repo, "actions/deliver/deliver.sh"),
-    ["--server", "localhost", "--app", app, "deploy", "dev", "--image", "web=alpine:3.20"],
+    "python3",
+    [
+      "-I",
+      join(repo, "actions/deliver/deliver.py"),
+      ...["--server", "localhost", "--app", app, "deploy", "dev", "--image", "web=alpine:3.20"],
+    ],
     { cwd: job, env: { ...maintainerEnv(), DEADLIFT_REGISTRY_TOKEN: "test-registry-token" } },
   );
   await rm(job, { recursive: true, force: true });
