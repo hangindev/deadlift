@@ -45,7 +45,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from deadlift.actions import job
-from deadlift.core.outcome import REASON_PREFIX, parse_outputs, reason, run_main
+from deadlift.core.outcome import REASON_PREFIX, Exit, parse_outputs, reason, run_main
 from deadlift.core.process import NOT_FOUND, Stream, shell_status, start
 
 USAGE = "deliver.py --server <host> --app <app> [--compose <file>] <operation> [arguments...]"
@@ -93,9 +93,9 @@ def report(status: int, log: str, *, server: str, app: str) -> Report:
     last = said[-1] if said else ""
     found = {name: outputs.get(name, "") for name in ("url", "environment", "swept")}
     match status:
-        case 0:
+        case Exit.DONE:
             return Report("done", last, **found, status=0)
-        case 75:
+        case Exit.SKIPPED:
             return Report("skipped", last, **found, status=0)
         case _ if status == _SSH_FAILED:
             unreachable = (
@@ -124,7 +124,7 @@ def summary(operation: str, arguments: Sequence[str], delivered: Report) -> list
     return lines
 
 
-def _copy_like_cp(source: Path, target: Path) -> None:
+def _copy_with_mode(source: Path, target: Path) -> None:
     """Copies a file as ``cp`` does: its contents, and its mode less the umask."""
     shutil.copyfile(source, target)
     umask = os.umask(0)
@@ -217,7 +217,7 @@ def _deliver(argv: Sequence[str]) -> int:
         if operation == "deploy":
             if not Path(compose).is_file():
                 job.usage(f"there's no Compose template at {compose}", USAGE)
-            _copy_like_cp(Path(compose), work / "delivery" / "compose.yaml")
+            _copy_with_mode(Path(compose), work / "delivery" / "compose.yaml")
             members.append("compose.yaml")
         token = os.environ.get(TOKEN_VARIABLE, "")
         if token:
