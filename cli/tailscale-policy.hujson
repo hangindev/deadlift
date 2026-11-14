@@ -27,19 +27,20 @@
 			"dst": ["tag:deadlift-svc"],
 			"ip":  ["tcp:443", "tcp:10001-10009"],
 		},
-		// The tailnet's members, to Servers: SSH only, which the SSH rule below narrows to root.
+		// The tailnet's admins, to Servers: SSH only, which the SSH rule below narrows to root.
 		{
-			"src": ["autogroup:member"],
+			"src": ["autogroup:admin"],
 			"dst": ["tag:deadlift-server"],
 			"ip":  ["tcp:22"],
 		},
 	],
 
 	"ssh": [
-		// The maintainers, as root: to re-run bootstrap and to add, remove and give secrets to Apps.
+		// The maintainers, the tailnet's admins, as root: to re-run bootstrap and to add, remove
+		// and give secrets to Apps. No other member logs in to a Server.
 		{
 			"action": "accept",
-			"src":    ["autogroup:member"],
+			"src":    ["autogroup:admin"],
 			"dst":    ["tag:deadlift-server"],
 			"users":  ["root"],
 		},

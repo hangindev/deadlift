@@ -87,6 +87,17 @@ def test_prints_the_policy_entries_set_once_per_tailnet_covering_every_apps_serv
         "dst": ["tag:deadlift-svc"],
         "ip": ["tcp:443", "tcp:10001-10009"],
     } in grants
+    # Only the tailnet's admins reach a Server's SSH, as root, for the CLI's `ssh root@`: not
+    # every member.
+    assert {"src": ["autogroup:admin"], "dst": ["tag:deadlift-server"], "ip": ["tcp:22"]} in grants
+    assert policy["ssh"] == [
+        {
+            "action": "accept",
+            "src": ["autogroup:admin"],
+            "dst": ["tag:deadlift-server"],
+            "users": ["root"],
+        }
+    ]
     # Nothing per App or per Service: those come from `deadlift app add`.
     assert not re.search(r"svc:|deadlift-ci|deadlift-1", json.dumps(policy))
 

@@ -24,7 +24,7 @@ Find out, asking the maintainer for what you can't find:
 - **The App's GitHub repo**, `<owner>/<name>`, where its workflows run.
 - **The `deadlift` command**: `bin/deadlift` in a checkout of `hangindev/deadlift`, on Python 3.12 or later.
 - **A Tailscale API access token** in `TAILSCALE_API_KEY` (admin console, Settings, Keys), and `TAILSCALE_TAILNET` when it isn't the token's own tailnet. `deadlift app add` uses it, and so do you, to read and validate the policy. Keep it out of files, commands you echo, and anything you show.
-- SSH as root to the Server (`ssh root@<server> true`), and `gh` logged in with access to the repo.
+- SSH as root to the Server (`ssh root@<server> true`), which deadlift's policy gives only the tailnet's admins, and `gh` logged in with access to the repo.
 
 Work in a scratch directory outside the App's repo for the files below: they hold the policy and secrets, and none is committed.
 
