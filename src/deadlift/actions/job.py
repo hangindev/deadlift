@@ -16,7 +16,7 @@ from collections.abc import Callable, Iterable, Mapping
 from pathlib import Path
 from typing import NoReturn
 
-from deadlift.core.outcome import Exit, Stop, reason, run_main
+from deadlift.core.outcome import Exit, Stop, reason, refuse, run_main
 from deadlift.core.process import Env, scrubbed_env
 
 # A shell's default IFS: how Bash's `read -a` split a line into words.
@@ -26,6 +26,26 @@ _WORDS = re.compile(r"[ \t\n]+")
 def job_env(set_vars: Mapping[str, str] | None = None) -> Env:
     """The job's whole environment, with ``set_vars`` added, for an action's children."""
     return scrubbed_env(keep=tuple(os.environ), set_vars=set_vars)
+
+
+FROM_INPUTS = "--from-action-inputs"
+"""The one argument an action's step passes its script, which then reads the action's inputs
+(see :func:`action_input`) instead of a command line."""
+
+
+def action_input(name: str) -> str:
+    """The action's input ``name`` (such as ``keep-none``), as its step hands it on: in the
+    environment as ``INPUT_<NAME>``, upper-cased with ``-`` as ``_``."""
+    return os.environ.get(f"INPUT_{name.upper().replace('-', '_')}", "")
+
+
+def flag_input(name: str, *, what: str) -> bool:
+    """The action's input ``name``, which must be ``true`` or ``false``. Refuses anything else,
+    saying ``what`` wasn't done."""
+    value = action_input(name)
+    if value not in ("true", "false"):
+        refuse(f"{name} must be true or false, not '{value}', so {what}.")
+    return value == "true"
 
 
 def words(text: str) -> list[str]:

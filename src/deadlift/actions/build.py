@@ -95,7 +95,18 @@ def _usage(why: str) -> NoReturn:
     job.usage(f"{why}, so nothing was built.", USAGE)
 
 
+def action_argv() -> list[str]:
+    """The command line the build action's inputs make: one image per line of its images."""
+    repository = job.action_input("repository")
+    args = ["--repository", repository, "--commit", job.action_input("commit")]
+    args += ["--platform", job.action_input("platform")]
+    args += ["--source", f"{job.action_input('server-url')}/{repository}"]
+    return [*args, "--", *job.action_input("images").removesuffix("\n").split("\n")]
+
+
 def _build(argv: Sequence[str]) -> Exit:
+    if list(argv) == [job.FROM_INPUTS]:
+        argv = action_argv()
     options = {"repository": "", "commit": "", "platform": "linux/amd64", "source": ""}
     args = list(argv)
     while args:

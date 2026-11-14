@@ -2,6 +2,7 @@
 about pull requests: what to keep is the caller's choice.
 
 Usage: prune-registry.py [--dry-run] (--keep <versions> | --keep-none) <image>...
+       prune-registry.py --from-action-inputs
   <versions>   tags (such as sha-<commit>) or digests, separated by commas or whitespace. A
                version is kept when any of its tags, or its digest, is listed.
   --keep-none  delete every version. An empty keep list is refused without it, and so is one
@@ -121,7 +122,24 @@ def _list_versions(versions_url: str, env: Env) -> list[Version] | None:
         return None
 
 
+def action_argv() -> list[str]:
+    """The command line the prune-registry action's inputs make. Its keep list goes as given,
+    unless it's blank and keep-none is true; the images are separated by spaces or newlines."""
+    args: list[str] = []
+    keep_none = job.action_input("keep-none") == "true"
+    if job.action_input("dry-run") == "true":
+        args.append("--dry-run")
+    if keep_none:
+        args.append("--keep-none")
+    keep = job.action_input("keep")
+    if keep_list(keep) or not keep_none:
+        args += ["--keep", keep]
+    return [*args, "--", *job.words(job.action_input("images"))]
+
+
 def _prune(argv: Sequence[str]) -> Exit:
+    if list(argv) == [job.FROM_INPUTS]:
+        argv = action_argv()
     keep_text = ""
     keep_given = keep_none = dry_run = False
     args = list(argv)

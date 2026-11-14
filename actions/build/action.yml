@@ -38,15 +38,13 @@ runs:
   steps:
     - id: build
       shell: bash
+      # build.py reads and checks these inputs itself.
       env:
-        IMAGES: ${{ inputs.images }}
-        COMMIT: ${{ inputs.commit }}
-        PLATFORM: ${{ inputs.platform }}
-        REPOSITORY: ${{ inputs.repository }}
-        SOURCE: ${{ github.server_url }}/${{ inputs.repository }}
+        INPUT_IMAGES: ${{ inputs.images }}
+        INPUT_COMMIT: ${{ inputs.commit }}
+        INPUT_PLATFORM: ${{ inputs.platform }}
+        INPUT_REPOSITORY: ${{ inputs.repository }}
+        INPUT_SERVER_URL: ${{ github.server_url }}
         REGISTRY_USERNAME: ${{ inputs.username }}
         REGISTRY_TOKEN: ${{ inputs.token }}
-      run: |
-        mapfile -t images <<<"$IMAGES"
-        python3 -I "$GITHUB_ACTION_PATH/build.py" --repository "$REPOSITORY" --commit "$COMMIT" \
-          --platform "$PLATFORM" --source "$SOURCE" -- "${images[@]}"
+      run: python3 -I "$GITHUB_ACTION_PATH/build.py" --from-action-inputs

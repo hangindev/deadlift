@@ -4,12 +4,15 @@ entry command, and reports what happened. The delivery tests drive it end to end
 
 Usage:
   deliver.py --server <host> --app <app> [--compose <file>] <operation> [arguments...]
+  deliver.py --from-action-inputs
 
   --server   The Server's name on the tailnet.
   --app      The App, whose deploy user deadlift-<app> the delivery logs in as.
   --compose  The App's Compose template, sent with ``deploy`` only. compose.yaml by default.
   The operation and its arguments are passed to the entry command as given, for example
   ``deploy feature-42 --image web=ghcr.io/owner/app/web:sha-1234``.
+  --from-action-inputs  Takes all of these from the deliver action's inputs instead, as
+             INPUT_<NAME> (see :func:`action_argv`).
 
 Environment:
   DEADLIFT_REGISTRY_TOKEN  The job's registry token, which the Server pulls the App's images
@@ -163,7 +166,30 @@ def _send(work: Path, members: list[str], destination: str, command: str) -> tup
     return status, log.decode("utf-8", errors="surrogateescape")
 
 
+def action_argv() -> list[str]:
+    """The command line the deliver action's inputs make: its operation and Environment, each
+    image (one per line or separated by spaces), the keys to keep (separated by commas, spaces
+    or newlines) and its flags, which must each be true or false."""
+    keep_none = job.flag_input("keep-none", what="nothing was delivered")
+    discard = job.flag_input("discard-newer-data", what="nothing was delivered")
+    args = ["--server", job.action_input("server"), "--app", job.action_input("app")]
+    args += ["--compose", job.action_input("compose"), job.action_input("operation")]
+    if environment := job.action_input("environment"):
+        args.append(environment)
+    for image in job.words(job.action_input("images")):
+        args += ["--image", image]
+    if keep := job.words(job.action_input("keep").replace(",", " ")):
+        args += ["--keep", ",".join(keep)]
+    if keep_none:
+        args.append("--keep-none")
+    if discard:
+        args.append("--discard-newer-data")
+    return args
+
+
 def _deliver(argv: Sequence[str]) -> int:
+    if list(argv) == [job.FROM_INPUTS]:
+        argv = action_argv()
     options = {"server": "", "app": "", "compose": "compose.yaml"}
     args = list(argv)
     while args and args[0].startswith("-"):

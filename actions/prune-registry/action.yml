@@ -34,18 +34,15 @@ runs:
   using: composite
   steps:
     - shell: bash
+      # prune-registry.py reads and checks these inputs itself. What it says goes in the job
+      # summary too.
       env:
         GH_TOKEN: ${{ inputs.token }}
         GITHUB_REPOSITORY: ${{ inputs.repository }}
-        IMAGES: ${{ inputs.images }}
-        KEEP: ${{ inputs.keep }}
-        KEEP_NONE: ${{ inputs.keep-none }}
-        DRY_RUN: ${{ inputs.dry-run }}
+        INPUT_IMAGES: ${{ inputs.images }}
+        INPUT_KEEP: ${{ inputs.keep }}
+        INPUT_KEEP_NONE: ${{ inputs.keep-none }}
+        INPUT_DRY_RUN: ${{ inputs.dry-run }}
       run: |
-        args=()
-        if [[ $DRY_RUN == true ]]; then args+=(--dry-run); fi
-        if [[ $KEEP_NONE == true ]]; then args+=(--keep-none); fi
-        if [[ -n ${KEEP//[[:space:],]/} || $KEEP_NONE != true ]]; then args+=(--keep "$KEEP"); fi
-        read -ra images -d '' <<<"$IMAGES" || true # one per line or on one line
-        python3 -I "$GITHUB_ACTION_PATH/prune-registry.py" "${args[@]}" -- "${images[@]}" 2>&1 |
+        python3 -I "$GITHUB_ACTION_PATH/prune-registry.py" --from-action-inputs 2>&1 |
           tee -a "$GITHUB_STEP_SUMMARY"
