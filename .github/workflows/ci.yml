@@ -100,6 +100,8 @@ jobs:
   server-setup-tests:
     runs-on: ubuntu-24.04
     timeout-minutes: 40
+    env:
+      UV_PYTHON: /usr/bin/python3
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -109,7 +111,16 @@ jobs:
         with:
           node-version: 24.21.0
           cache: pnpm
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: 0.11.26
       - run: pnpm install --frozen-lockfile
+      - run: uv sync --locked
+      # The pytest port first, so it bootstraps a fresh machine, as the TypeScript suite it
+      # replaces did; the TypeScript suite then runs against the Server it left. Bootstrap's file
+      # first, by path: a plain `uv run pytest` leaves tests/server_setup out.
+      - name: The server-setup tests (pytest)
+        run: uv run pytest -v tests/server_setup/test_bootstrap.py tests/server_setup/test_app.py
       - run: pnpm test:server-setup
       - name: The delivery tests on the bootstrapped Server
         run: pnpm test
