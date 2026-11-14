@@ -185,6 +185,9 @@ jobs:
           $reason
 
           $run has the details."
+              # Neutral, as every outcome's check is but success: it never blocks a merge. The
+              # failed step says it's red.
+              check neutral "Deploy failed" "${REASON:-It failed before reaching the Server.}"
               ;;
             destroy:done) comment "$title was destroyed, as this closed." update-only ;;
             destroy:*)
