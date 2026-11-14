@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Stand-ins for what a Server's containers must not reach, for test/isolation.test.ts on a
+# Stand-ins for what a Server's containers must not reach, for tests/delivery/test_isolation.py on a
 # throwaway machine only (it changes the machine's network), as root:
 #
 #   outside.sh up <name> <port>    set them up, each answering TCP on <port>

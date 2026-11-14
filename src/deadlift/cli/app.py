@@ -1,5 +1,5 @@
 """``deadlift app add|secrets|remove`` and ``deadlift server status``: the maintainer's half of an
-App's place on a Server. The Server's half is its app.sh, installed by bootstrap, which these run
+App's place on a Server. The Server's half is its app, installed by bootstrap, which these run
 over ``ssh root@<server>``.
 
 app add and app remove reach the Tailscale API with the maintainer's own credential, an API
@@ -34,7 +34,7 @@ from deadlift.core.outcome import OUTPUT_PREFIX, fail
 from deadlift.core.process import NOT_FOUND, Stream, Target, run
 
 # Installed by bootstrap: the Server half of the app and server status commands.
-APP_SCRIPT = "/usr/local/lib/deadlift/app.sh"
+APP_SCRIPT = "/usr/local/lib/deadlift/app"
 SSH_UNREACHABLE = 255
 
 _REPO = re.compile(r"[A-Za-z0-9-]+/[A-Za-z0-9._-]+")
@@ -93,9 +93,9 @@ def parse_app_args(argv: Sequence[str]) -> AppArgs:
 
 
 def on_server(server: str, args: Sequence[str], *, stdin: Target = Stream.DEVNULL) -> list[str]:
-    """Runs the installed app.sh on the Server as root, with ``stdin`` passed on. Its stderr is
+    """Runs the installed app on the Server as root, with ``stdin`` passed on. Its stderr is
     shown as it comes, its stdout once it's done, except for its ``deadlift-output:`` lines, which
-    it returns. Stops, as app.sh did, when it fails."""
+    it returns. Stops, as app does, when it fails."""
     remote = f"{APP_SCRIPT} " + "".join(f"{shlex.quote(arg)} " for arg in args)
     done = run(
         ["ssh", "-o", "StrictHostKeyChecking=accept-new", f"root@{server}", remote],

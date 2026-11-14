@@ -32,7 +32,7 @@ from types import FrameType
 from typing import Literal, cast
 
 REPO = Path(__file__).resolve().parents[2]
-FAKES = REPO / "test" / "fakes"
+FAKES = REPO / "tests" / "support" / "fakes" / "delivery"
 EXAMPLE_APP = REPO / "tests" / "delivery" / "example_app"
 REGISTRY_IMAGE = (
     "registry:3@sha256:38907510915c3f1604c7e83d6ab602ab3020d092f73bdaed8696773693ff768c"
@@ -149,9 +149,8 @@ def free_port_block(taken: Sequence[int]) -> int:
 
 
 def require_tools() -> None:
-    for tool in ("flock", "jq"):
-        if shutil.which(tool) is None:
-            raise RuntimeError(f"The delivery tests need {tool}, which every Server has")
+    if shutil.which("flock") is None:
+        raise RuntimeError("The delivery tests need flock, which every Server has")
     check = subprocess.run(["python3", "-I", "-c", "import yaml"], capture_output=True, check=False)
     if check.returncode != 0:
         raise RuntimeError(
@@ -460,7 +459,7 @@ class Server:
                 f"PATH={self.bin}:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
                 *docker_host,
                 *settings,
-                str(self.lib / "deploy.sh"),
+                str(self.lib / "deploy"),
                 "watchdog",
             ],
             env={},

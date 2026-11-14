@@ -1,6 +1,6 @@
 """deadlift's firewall for containers (ADR 0001): a container on a Server can reach the internet,
 and nothing of the Server's own, the tailnet's, the cloud's metadata service or any private
-network. Bootstrap installs its launcher, owned by root, at /usr/local/lib/deadlift/firewall.sh,
+network. Bootstrap installs its launcher, owned by root, at /usr/local/lib/deadlift/firewall,
 runs it, and installs deadlift-firewall.service, which runs it at every boot before Docker starts.
 
 For IPv4 and IPv6 alike, it keeps two chains of its own in the mangle table:

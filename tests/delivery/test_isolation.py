@@ -18,7 +18,7 @@ import socket
 import socketserver
 import subprocess
 import threading
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
@@ -27,35 +27,9 @@ import pytest
 
 from tests.support.harness import Harness, Server, docker
 from tests.support.network import PROBE, external_ipv4_addresses, reach
+from tests.support.throwaway import why_not_throwaway
 
-OUTSIDE = Path(__file__).resolve().parents[2] / "test" / "support" / "outside.sh"
-
-# The file test/server-setup/multipass.sh creates in the VMs it launches for the server-setup
-# tests.
-THROWAWAY_MARKER = Path("/etc/deadlift-throwaway-machine")
-
-
-def why_not_throwaway(
-    env: Mapping[str, str] = os.environ, marker_exists: bool | None = None
-) -> str | None:
-    """Why this machine may not be reconfigured by tests, or None when it may: bootstrapped as a
-    Server, its Docker restarted with userns-remap, its firewall and network changed. Only a
-    machine thrown away after the run may: a GitHub-hosted Ubuntu 24.04 runner, or a Multipass
-    VM that test/server-setup/multipass.sh launched and marked. Never a developer's machine,
-    even one with passwordless sudo."""
-    github_hosted = (
-        env.get("GITHUB_ACTIONS") == "true"
-        and env.get("RUNNER_ENVIRONMENT") == "github-hosted"
-        and env.get("ImageOS") == "ubuntu24"
-    )
-    marked = THROWAWAY_MARKER.exists() if marker_exists is None else marker_exists
-    if github_hosted or marked:
-        return None
-    return (
-        "this isn't a throwaway machine (a GitHub-hosted ubuntu-24.04 runner, or a Multipass VM "
-        f"marked with {THROWAWAY_MARKER} by test/server-setup/multipass.sh), and these tests "
-        "reconfigure the machine's Docker, firewall and network"
-    )
+OUTSIDE = Path(__file__).resolve().parents[1] / "support" / "outside.sh"
 
 
 def _remapped() -> bool:

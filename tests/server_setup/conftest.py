@@ -20,8 +20,8 @@ from tests.support.throwaway import why_not_throwaway
 
 @pytest.fixture(scope="module", autouse=True)
 def maintainer() -> Generator[Maintainer]:
-    """Per test file, as each TypeScript file's beforeAll did: refuses a machine that isn't a
-    throwaway one, then gives the maintainer an SSH key of their own that root here accepts."""
+    """Per test file: refuses a machine that isn't a throwaway one, then gives the maintainer
+    an SSH key of their own that root here accepts."""
     why = why_not_throwaway()
     if why:
         pytest.fail(f"Refusing to run the server-setup tests: {why}.", pytrace=False)
@@ -29,7 +29,7 @@ def maintainer() -> Generator[Maintainer]:
     work = Path(tempfile.mkdtemp(prefix=f"deadlift-test-{hex_}-"))
     try:
         ok("ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", work / "key")
-        ok("sudo", "bash", REPO / "test/server-setup/prepare.sh", work / "key.pub")
+        ok("sudo", "bash", REPO / "tests/server_setup/prepare.sh", work / "key.pub")
         (work / "bin").mkdir()
         ssh = work / "bin/ssh"
         ssh.write_text(

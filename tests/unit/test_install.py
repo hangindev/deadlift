@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from deadlift.bootstrap.install import (
+    LAUNCHERS,
     Launcher,
     install_bytes,
     install_launchers,
@@ -12,6 +13,7 @@ from deadlift.bootstrap.install import (
     launcher_source,
     main,
     python_dir,
+    remove_retired_launchers,
 )
 from deadlift.core.process import Stream, run, scrubbed_env
 
@@ -126,16 +128,46 @@ def test_installing_again_changes_nothing_and_drops_what_is_gone(tmp_path: Path)
 
 
 def test_a_file_is_rewritten_only_when_it_differs(tmp_path: Path) -> None:
-    target = tmp_path / "deploy.sh"
+    target = tmp_path / "deploy"
     assert install_bytes(b"one", target, 0o755, chown=False)
     assert not install_bytes(b"one", target, 0o755, chown=False)
     assert install_bytes(b"one", target, 0o700, chown=False)
     assert install_bytes(b"two", target, 0o700, chown=False)
     assert target.read_bytes() == b"two"
-    assert not (tmp_path / "deploy.sh.new").exists()
+    assert not (tmp_path / "deploy.new").exists()
 
 
 def test_the_tests_install_the_server_as_bootstrap_would(tmp_path: Path) -> None:
     lib, sbin = tmp_path / "lib", tmp_path / "sbin"
     assert main(["--lib", str(lib), "--sbin", str(sbin), "--no-chown"]) == 0
     assert (python_dir(lib) / "deadlift/core/process.py").is_file()
+
+
+def test_launchers_are_named_without_a_suffix() -> None:
+    assert {launcher.name for launcher in LAUNCHERS} == {
+        "deadlift-entry",
+        "deploy",
+        "template",
+        "app",
+        "firewall",
+    }
+
+
+def test_the_launchers_installed_with_a_sh_suffix_are_removed_and_nothing_else(
+    tmp_path: Path,
+) -> None:
+    lib, sbin = tmp_path / "lib", tmp_path / "sbin"
+    install_package(SOURCE, lib, chown=False)
+    install_launchers(LAUNCHERS, lib=lib, sbin=sbin, chown=False)
+    old = [lib / name for name in ("deploy.sh", "template.sh", "app.sh", "firewall.sh")]
+    for path in old:
+        path.write_text("#!/usr/bin/python3 -I\n")
+    others = [lib / "notes.sh", lib / "deploy.sh.bak", sbin / "deploy.sh"]
+    for path in others:
+        path.write_text("someone else's\n")
+    before = sorted(p for p in tmp_path.rglob("*") if p not in old)
+
+    assert sorted(remove_retired_launchers(lib)) == sorted(old)
+
+    assert sorted(tmp_path.rglob("*")) == before
+    assert remove_retired_launchers(lib) == []

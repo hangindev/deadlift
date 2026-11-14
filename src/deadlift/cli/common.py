@@ -53,7 +53,7 @@ class Usage(Exception):
 
 class Exited(Exception):
     """Ends the command with ``code`` and no reason line of its own, as a Bash script ended with
-    the status of a child that had said why already (such as the Server's app.sh)."""
+    the status of a child that had said why already (such as the Server's app)."""
 
     def __init__(self, code: int) -> None:
         super().__init__(code)

@@ -1,9 +1,9 @@
 """The server-setup tests: setting up a Server. Runs the real `deadlift server bootstrap` against
 this machine over real SSH as root, with only `tailscale` faked, so it reconfigures this
 machine's Docker and firewall for good. It refuses to start anywhere but a throwaway machine: the
-GitHub-hosted ubuntu-24.04 runner in CI, or a Multipass VM (test/server-setup/multipass.sh).
+GitHub-hosted ubuntu-24.04 runner in CI, or a Multipass VM (tests/server_setup/multipass.sh).
 
-In CI, the delivery tests then run on the Server this leaves behind (test/isolation.test.ts).
+In CI, the delivery tests then run on the Server this leaves behind (tests/delivery).
 """
 
 import re
@@ -57,8 +57,10 @@ class TestDeadliftServerBootstrap:
         # (ADR 0004).
         for installed, source in [
             ("/usr/local/sbin/deadlift-entry", "server/entry.py"),
-            ("/usr/local/lib/deadlift/deploy.sh", "server/deploy.py"),
-            ("/usr/local/lib/deadlift/template.sh", "server/template.py"),
+            ("/usr/local/lib/deadlift/deploy", "server/deploy.py"),
+            ("/usr/local/lib/deadlift/template", "server/template.py"),
+            ("/usr/local/lib/deadlift/app", "server/app.py"),
+            ("/usr/local/lib/deadlift/firewall", "server/firewall.py"),
         ]:
             assert ok("stat", "--format", "%U:%G %a", installed) == "root:root 755"
             assert Path(installed).read_text().split("\n")[0] == "#!/usr/bin/python3 -I"
@@ -158,3 +160,24 @@ class TestDeadliftServerBootstrap:
             "s/^feature_deploy_disk_limit=.*/feature_deploy_disk_limit=80/",
             "/srv/deadlift/settings",
         )
+
+    def test_removes_the_launchers_an_earlier_bootstrap_installed_with_a_sh_suffix(
+        self, maintainer: Maintainer
+    ) -> None:
+        lib = Path("/usr/local/lib/deadlift")
+        old = [lib / name for name in ("deploy.sh", "template.sh", "app.sh", "firewall.sh")]
+        # As an earlier bootstrap left them, and a file that's not deadlift's.
+        for path in old:
+            ok("sudo", "cp", "--preserve=mode", lib / path.stem, path)
+        notes = lib / "notes.sh"
+        ok("sudo", "touch", notes)
+        try:
+            result = bootstrap(maintainer)
+
+            assert result.code == 0, result.output
+            for path in old:
+                assert not path.exists()
+                assert f"Removed {path}" in result.output
+            assert notes.exists()
+        finally:
+            ok("sudo", "rm", "--force", notes, *old)

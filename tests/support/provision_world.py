@@ -1,7 +1,7 @@
 """The maintainer's computer and the world around it, for ``deadlift server provision``: machines
 they can buy, each answering SSH on its public address until its firewall closes it, and the
-tailnet those machines join. The fakes are test/fakes/provision/ (``ssh``, ``tailscale`` and a
-browser opener); a World is their directory, ``$DEADLIFT_TEST_WORLD``.
+tailnet those machines join. The fakes are tests/support/fakes/provision/ (``ssh``,
+``tailscale`` and a browser opener); a World is their directory, ``$DEADLIFT_TEST_WORLD``.
 
 ``World.provision`` runs the wizard with a scripted human: one ``Turn`` per thing they do, each
 waiting until the wizard has printed what it's waiting for."""
@@ -22,7 +22,7 @@ from typing import IO
 
 REPO = Path(__file__).resolve().parents[2]
 DEADLIFT = REPO / "bin/deadlift"
-FAKES = REPO / "test/fakes/provision"
+FAKES = REPO / "tests/support/fakes/provision"
 
 # How long the human waits for each prompt, and for the wizard to finish after the last one.
 TURN_TIMEOUT = 20.0

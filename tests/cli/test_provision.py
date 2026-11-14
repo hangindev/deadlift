@@ -1,8 +1,8 @@
 """``deadlift server provision``, the wizard that gets a new Server, driven as a maintainer would:
 a scripted human reads what it prints and answers each prompt in turn. The machines it walks them
-through buying, and the tailnet they join, are fakes (test/fakes/provision/): ``ssh`` to a machine
-and the maintainer's own ``tailscale``. Nothing here reaches a real machine or tailnet, and no
-browser opens."""
+through buying, and the tailnet they join, are fakes (tests/support/fakes/provision/): ``ssh``
+to a machine and the maintainer's own ``tailscale``. Nothing here reaches a real machine or
+tailnet, and no browser opens."""
 
 import json
 import re

@@ -16,7 +16,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # Lints what ships (Bash) and type-checks the tests.
+  # Lints the workflows and actions, and what's still shell: the tests' fakes and scripts.
   check:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -26,26 +26,18 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      # For test/actionlint.sh, which writes the actions out as workflows with PyYAML.
+      # For tests/actionlint.sh, which writes the actions out as workflows with PyYAML.
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           version: 0.11.26
-      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version: 24.21.0
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm check-types
-      # The runner image ships shellcheck. It checks what's still Bash: the files with a shell's
-      # shebang, so each one ported to Python drops out by itself.
+      # The runner image ships shellcheck. Everything deadlift ships is Python (ADR 0004); what's
+      # left in shell is the tests' fakes and scripts, the files with a shell's shebang.
       - run: >-
-          find bin cli actions test/*.sh test/fakes test/support test/server-setup -type f
-          ! -name '*.yml' ! -name '*.ts' ! -name '*.hujson' ! -name '*.py' -print0 |
+          find bin actions tests -type f ! -name '*.py' ! -path '*/__pycache__/*' -print0 |
           xargs -0 grep -lZ -E '^#!(/usr/bin/env (ba)?sh|/bin/(ba)?sh)' | xargs -0 -r shellcheck
       # The workflows, the composite actions written out as workflows, and the starter workflows
       # as `deadlift init` writes them.
-      - run: test/actionlint.sh
+      - run: tests/actionlint.sh
 
   # Lints and type-checks deadlift's Python (ADR 0004), on the runner's system python3, which is
   # Ubuntu 24.04's, as on a Server.
@@ -66,8 +58,7 @@ jobs:
       - run: uv run ruff format --check
       - run: uv run pyright
 
-  # deadlift's Python tests. While the scripts are ported, the TypeScript suite in the jobs below
-  # stays the oracle for what they do.
+  # deadlift's tests, but for the delivery and server-setup tests, which the jobs below run.
   python-tests:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -84,8 +75,7 @@ jobs:
       - run: uv run pytest
 
   # The delivery tests: deliveries end to end, through the deliver client script, the entry
-  # command and the installed deploy script, against this runner's Docker. Both suites run until
-  # the TypeScript one is removed.
+  # command and the installed deploy script, against this runner's Docker.
   delivery-tests:
     runs-on: ubuntu-24.04
     timeout-minutes: 60
@@ -95,17 +85,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version: 24.21.0
-          cache: pnpm
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           version: 0.11.26
-      - run: pnpm install --frozen-lockfile
       - run: uv sync --locked
-      - run: pnpm test
       - run: uv run pytest tests/delivery -rs
 
   # The server-setup tests: bootstrap this runner into a Server, for real, with only tailscale
@@ -120,27 +103,15 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version: 24.21.0
-          cache: pnpm
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           version: 0.11.26
-      - run: pnpm install --frozen-lockfile
       - run: uv sync --locked
-      # The pytest port first, so it bootstraps a fresh machine, as the TypeScript suite it
-      # replaces did; the TypeScript suite then runs against the Server it left. Bootstrap's file
-      # first, by path: a plain `uv run pytest` leaves tests/server_setup out.
-      - name: The server-setup tests (pytest)
+      # Bootstrap's file first, by path, so it bootstraps the fresh machine the other then uses.
+      # A plain `uv run pytest` leaves tests/server_setup out.
+      - name: The server-setup tests
         run: uv run pytest -v tests/server_setup/test_bootstrap.py tests/server_setup/test_app.py
-      - run: pnpm test:server-setup
       - name: The delivery tests on the bootstrapped Server
-        run: pnpm test
-        env:
-          DEADLIFT_TEST_BOOTSTRAPPED: "true"
-      - name: The delivery tests on the bootstrapped Server (pytest)
         run: uv run pytest tests/delivery -rs
         env:
           DEADLIFT_TEST_BOOTSTRAPPED: "true"

@@ -1,16 +1,16 @@
 """deadlift's deploy script: runs one operation on one App's Environments. Bootstrap installs it on
-the Server, owned by root, at /usr/local/lib/deadlift/deploy.sh, and it's never delivered
+the Server, owned by root, at /usr/local/lib/deadlift/deploy, and it's never delivered
 (ADR 0001): a fix to it reaches a Server when `deadlift server bootstrap` is re-run. Only the
 entry command runs it, as root, after working out the App from the calling user and unpacking
 the delivery.
 
 Usage:
-  deploy.sh --app <app> --delivery <dir> deploy dev|feature-<key> [--image <name>=<ref>]...
+  deploy --app <app> --delivery <dir> deploy dev|feature-<key> [--image <name>=<ref>]...
       [--keep <keys> | --keep-none]
-  deploy.sh --app <app> --delivery <dir> rollback dev [--discard-newer-data]
-  deploy.sh --app <app> --delivery <dir> destroy feature-<key>
-  deploy.sh --app <app> --delivery <dir> sweep --keep <keys> | --keep-none
-  deploy.sh watchdog
+  deploy --app <app> --delivery <dir> rollback dev [--discard-newer-data]
+  deploy --app <app> --delivery <dir> destroy feature-<key>
+  deploy --app <app> --delivery <dir> sweep --keep <keys> | --keep-none
+  deploy watchdog
 
   --app      The App, as the entry command worked it out. Never from a delivery's arguments.
   --delivery  The unpacked delivery: compose.yaml, the App's Compose template, and token, the
@@ -147,12 +147,12 @@ from deadlift.server import template
 from deadlift.server.text import jq_text, last_line, lines, read_settings, sentence
 
 USAGE = (
-    "Usage: deploy.sh --app <app> --delivery <dir> deploy dev|feature-<key> "
+    "Usage: deploy --app <app> --delivery <dir> deploy dev|feature-<key> "
     "[--image <name>=<ref>]... [--keep <keys> | --keep-none]\n"
-    "Usage: deploy.sh --app <app> --delivery <dir> rollback dev [--discard-newer-data]\n"
-    "Usage: deploy.sh --app <app> --delivery <dir> destroy feature-<key>\n"
-    "Usage: deploy.sh --app <app> --delivery <dir> sweep --keep <keys> | --keep-none\n"
-    "Usage: deploy.sh watchdog\n"
+    "Usage: deploy --app <app> --delivery <dir> rollback dev [--discard-newer-data]\n"
+    "Usage: deploy --app <app> --delivery <dir> destroy feature-<key>\n"
+    "Usage: deploy --app <app> --delivery <dir> sweep --keep <keys> | --keep-none\n"
+    "Usage: deploy watchdog\n"
 )
 
 # How long the routed service has to report healthy.

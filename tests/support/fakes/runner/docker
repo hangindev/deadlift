@@ -1,0 +1,151 @@
+#!/usr/bin/env python3
+"""A fake `docker` on a fake CI runner, ahead of any real one, for testing the build action. It
+stands in for the Docker CLI and the registries it pushes to, and never touches Docker:
+
+  docker login <registry> --username <user> --password-stdin
+      Saves the login in $DOCKER_CONFIG (or ~/.docker), as the real one does.
+  docker buildx build [--platform p] [--provenance=bool] [--sbom=bool] [--label k=v]...
+                      [--file f] [--target t] [--tag ref]... [--push] [--quiet] <context>
+      Fails, as the real one does, when the Dockerfile isn't there, or when pushing to a
+      registry without a login. With --push, records each tag as pushed.
+
+State, in $FAKE_RUNNER_STATE: pushed.jsonl, one line per pushed tag: the ref, who pushed it
+(registry, username and password of the login), and how it was built. Standard library only.
+"""
+
+import hashlib
+import json
+import os
+import sys
+from pathlib import Path
+from typing import cast
+
+
+def say(text: str) -> None:
+    sys.stderr.write(f"{text}\n")
+
+
+def logins(config: Path) -> dict[str, dict[str, str]]:
+    """The logins saved in ``config``, by registry: none when there's no config."""
+    try:
+        saved = cast(dict[str, object], json.loads((config / "config.json").read_text()))
+    except (OSError, ValueError):
+        return {}
+    return cast(dict[str, dict[str, str]], saved.get("auths") or {})
+
+
+def login(argv: list[str], config: Path) -> int:
+    registry, rest = argv[0], argv[1:]
+    username = password = ""
+    while rest:
+        if rest[0] == "--username" and len(rest) > 1:
+            username, rest = rest[1], rest[2:]
+        elif rest[0] == "--password-stdin":
+            # As $(cat) reads it: without its trailing line breaks.
+            password, rest = sys.stdin.read().rstrip("\n"), rest[1:]
+        else:
+            say(f"fake docker: login doesn't take {rest[0]}")
+            return 125
+    config.mkdir(parents=True, exist_ok=True)
+    try:
+        saved = cast(dict[str, object], json.loads((config / "config.json").read_text()))
+    except FileNotFoundError:
+        saved = {}
+    auths = cast(dict[str, object], saved.setdefault("auths", {}))
+    auths[registry] = {"username": username, "password": password}
+    (config / "config.json").write_text(json.dumps(saved, indent=2) + "\n")
+    print("Login Succeeded")
+    return 0
+
+
+def build(argv: list[str], config: Path, state: Path) -> int:
+    tags: list[str] = []
+    labels: list[str] = []
+    platform = file = target = context = ""
+    provenance = sbom = "true"
+    push = False
+    rest = argv
+    valued = {"--platform", "--label", "--file", "--target", "--tag"}
+    while rest:
+        arg = rest[0]
+        if arg in valued and len(rest) > 1:
+            value, rest = rest[1], rest[2:]
+            if arg == "--platform":
+                platform = value
+            elif arg == "--label":
+                labels.append(value)
+            elif arg == "--file":
+                file = value
+            elif arg == "--target":
+                target = value
+            else:
+                tags.append(value)
+            continue
+        rest = rest[1:]
+        if arg.startswith("--provenance="):
+            provenance = arg.partition("=")[2]
+        elif arg.startswith("--sbom="):
+            sbom = arg.partition("=")[2]
+        elif arg == "--push":
+            push = True
+        elif arg == "--quiet":
+            pass
+        elif arg.startswith("-"):
+            say(f"fake docker: buildx build doesn't take {arg}")
+            return 125
+        else:
+            context = arg
+    if not context:
+        say("ERROR: docker buildx build requires 1 argument")
+        return 1
+    dockerfile = file or f"{context}/Dockerfile"
+    if not Path(dockerfile).is_file():
+        say(
+            "ERROR: failed to build: failed to read dockerfile: open"
+            f" {dockerfile}: no such file or directory"
+        )
+        return 1
+    if not push:
+        return 0
+    saved = logins(config)
+    for tag in tags:
+        registry = tag.split("/", 1)[0]
+        found = saved.get(registry)
+        if not found:
+            say(f"ERROR: failed to push {tag}: unauthorized")
+            return 1
+        pushed = {
+            "ref": tag,
+            "login": {**found, "registry": registry},
+            "platform": platform,
+            "provenance": provenance,
+            "sbom": sbom,
+            "context": context,
+            "dockerfile": dockerfile,
+            "target": target,
+            "labels": labels,
+        }
+        with (state / "pushed.jsonl").open("a") as out:
+            out.write(json.dumps(pushed) + "\n")
+    print(f"sha256:{hashlib.sha256(' '.join(tags).encode()).hexdigest()}")
+    return 0
+
+
+def main(argv: list[str]) -> int:
+    state_dir = os.environ.get("FAKE_RUNNER_STATE")
+    if not state_dir:
+        say("FAKE_RUNNER_STATE: the fake docker needs FAKE_RUNNER_STATE")
+        return 1
+    state = Path(state_dir)
+    with (state / "calls.log").open("a") as log:
+        log.write(f"docker {' '.join(argv)}\n")
+    config = Path(os.environ.get("DOCKER_CONFIG") or Path.home() / ".docker")
+    if len(argv) >= 2 and argv[0] == "login":
+        return login(argv[1:], config)
+    if argv[:2] == ["buildx", "build"]:
+        return build(argv[2:], config, state)
+    say(f"fake docker: the build action has no reason to run 'docker {' '.join(argv)}'")
+    return 125
+
+
+sys.exit(main(sys.argv[1:]))
