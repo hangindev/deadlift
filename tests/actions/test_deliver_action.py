@@ -109,6 +109,18 @@ def test_joins_the_tailnet_as_the_apps_ci_delivers_as_its_deploy_user_and_leaves
     }
 
 
+def test_sends_the_registry_token_only_inside_the_delivery(runner: Runner) -> None:
+    runner.fake.server_answers(DEPLOYED)
+
+    run = runner.deliver({"operation": "deploy", "environment": "feature-42"})
+
+    assert run.status == 0, run.stderr
+    (sent,) = runner.fake.deliveries()
+    assert sent.files["token"] == "fake-job-token"  # noqa: S105 - the fake job's
+    assert "PATH" in sent.ssh_environment
+    assert "DEADLIFT_REGISTRY_TOKEN" not in sent.ssh_environment
+
+
 def operation_sent(runner: Runner) -> list[str]:
     """The words of the operation the Server was asked to run, after the entry command's own."""
     delivery = runner.fake.deliveries()[0]

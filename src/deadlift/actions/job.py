@@ -23,9 +23,13 @@ from deadlift.core.process import Env, scrubbed_env
 _WORDS = re.compile(r"[ \t\n]+")
 
 
-def job_env(set_vars: Mapping[str, str] | None = None) -> Env:
-    """The job's whole environment, with ``set_vars`` added, for an action's children."""
-    return scrubbed_env(keep=tuple(os.environ), set_vars=set_vars)
+def job_env(set_vars: Mapping[str, str] | None = None, *, drop: Iterable[str] = ()) -> Env:
+    """The job's whole environment, less the variables named in ``drop`` and with ``set_vars``
+    added, for an action's children."""
+    dropped = set(drop)
+    return scrubbed_env(
+        keep=tuple(name for name in os.environ if name not in dropped), set_vars=set_vars
+    )
 
 
 FROM_INPUTS = "--from-action-inputs"

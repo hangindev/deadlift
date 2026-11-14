@@ -8,7 +8,8 @@ the remote shell would run, and what the tar held) and answers as the test set u
 State, in $FAKE_RUNNER_STATE:
   server-reply, server-status   What the Server prints, and its exit code (0 when unset).
   ssh/<n>/                      The nth delivery: destination, args (the remote command's words,
-                                as JSON) and delivery/ (the tar's members).
+                                as JSON), environment (the names of ssh's own variables, as
+                                JSON) and delivery/ (the tar's members).
 Standard library only.
 """
 
@@ -52,6 +53,8 @@ def main(argv: list[str]) -> int:
     # The remote shell splits the command line into words, undoing the client's quoting.
     words = shlex.split(" ".join(command))
     (call / "args").write_text(json.dumps(words, indent=2) + "\n")
+    # What of the job's environment ssh itself was handed: the names only.
+    (call / "environment").write_text(json.dumps(sorted(os.environ), indent=2) + "\n")
     untar = subprocess.run(["tar", "-xf", "-", "-C", str(call / "delivery")], check=False)
     if untar.returncode != 0:
         return untar.returncode

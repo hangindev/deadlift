@@ -56,6 +56,9 @@ saying to re-run bootstrap."""
 
 ENTRY_COMMAND = "/usr/local/sbin/deadlift-entry"
 
+TOKEN_VARIABLE = "DEADLIFT_REGISTRY_TOKEN"  # noqa: S105 - its name, not its value
+"""Where the job's registry token comes from, to be sent inside the delivery and nowhere else."""
+
 # ssh's own exit code when it couldn't connect or log in.
 _SSH_FAILED = 255
 
@@ -132,7 +135,8 @@ def _copy_like_cp(source: Path, target: Path) -> None:
 def _send(work: Path, members: list[str], destination: str, command: str) -> tuple[int, str]:
     """Streams the delivery tar into ssh, echoing what the Server prints (its stdout and stderr
     together) to stdout as it comes. Returns ssh's exit code and what it printed."""
-    env = job.job_env()
+    # The token goes only inside the delivery: neither tar nor ssh needs it.
+    env = job.job_env(drop=(TOKEN_VARIABLE,))
     tar_argv = ["tar", "-C", str(work / "delivery"), "-cf", "-", "--files-from=/dev/null"]
     ssh_argv = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=30"]
     ssh_argv += ["-o", "StrictHostKeyChecking=accept-new", destination, command]
@@ -217,7 +221,7 @@ def _deliver(argv: Sequence[str]) -> int:
                 job.usage(f"there's no Compose template at {compose}", USAGE)
             _copy_like_cp(Path(compose), work / "delivery" / "compose.yaml")
             members.append("compose.yaml")
-        token = os.environ.get("DEADLIFT_REGISTRY_TOKEN", "")
+        token = os.environ.get(TOKEN_VARIABLE, "")
         if token:
             fd = os.open(work / "delivery" / "token", os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
             os.fchmod(fd, 0o600)
