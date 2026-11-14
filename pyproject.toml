@@ -36,6 +36,7 @@ include = [
   "tests",
   "actions",
   "bin",
+  "skills",
   "tests/support/fakes/delivery/tailscale",
   "tests/support/fakes/provision/ssh",
   "tests/support/fakes/provision/tailscale",
