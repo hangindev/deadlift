@@ -146,6 +146,7 @@ from deadlift.core.lock import server_lock
 from deadlift.core.outcome import Exit, Stop, output, reason
 from deadlift.core.process import Env, Stream, Target, run, scrubbed_env, start
 from deadlift.server import template
+from deadlift.server.layout import layout
 from deadlift.server.text import jq_text, last_line, lines, read_settings, sentence
 
 USAGE = (
@@ -311,11 +312,11 @@ class Server:
 
     def disk_used(self) -> int | None:
         """How full the disk is, as a whole percentage: the fuller of the filesystems holding
-        the Server's state and Docker's data. DEADLIFT_DISK_USED replaces the measure, for the
-        tests. None when it can't be measured."""
-        override = os.environ.get("DEADLIFT_DISK_USED", "")
-        if override:
-            return int(override)
+        the Server's state and Docker's data. The tests' layout replaces the measure. None when
+        it can't be measured."""
+        stand_in = layout().disk_used
+        if stand_in is not None:
+            return _stand_in_disk_used(stand_in)
         paths = [str(self.state)]
         _, root = self.docker(
             "info", "--format", "{{.DockerRootDir}}", stdout=Stream.CAPTURE, stderr=Stream.DEVNULL
@@ -1740,11 +1741,17 @@ class Watchdog(Server):
         )
 
 
+def _stand_in_disk_used(path: Path) -> int | None:
+    """How full the tests' fake Server's disk is, from the file their layout names."""
+    try:
+        text = path.read_text().strip()
+    except OSError:
+        return None
+    return int(text) if _PERCENT.fullmatch(text) else None
+
+
 def _main(argv: Sequence[str]) -> None:
-    state = Path(os.environ.get("DEADLIFT_STATE_DIR") or "/srv/deadlift")
-    disk_used = os.environ.get("DEADLIFT_DISK_USED", "")
-    if disk_used and not _PERCENT.fullmatch(disk_used):
-        usage(f"DEADLIFT_DISK_USED is '{disk_used}', and it must be a whole percentage, 0 to 100")
+    state = layout().state
 
     # The watchdog acts on the whole Server, for its systemd timer, never for a delivery: the
     # entry command doesn't offer it.

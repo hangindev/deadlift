@@ -9,7 +9,11 @@ directories, through :func:`main`::
 
     python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); \\
       from deadlift.bootstrap.install import main; sys.exit(main(sys.argv[2:]))' \\
-      <checkout>/src --lib <dir> --sbin <dir> --no-chown
+      <checkout>/src --lib <dir> --sbin <dir> --state <dir> --disk-used-file <file> --no-chown
+
+The Server's own paths are fixed (deadlift.server.layout), and never read from the environment. A
+launcher the tests install also writes in where their fake Server keeps its code and state, and
+a file standing in for how full its disk is. A launcher bootstrap installs writes in none of it.
 
 Everything is installed as bootstrap installs files: compared first, so a run with nothing to do
 changes nothing, and written aside then renamed, so a run cut off half way never leaves half a
@@ -19,7 +23,7 @@ file. Standard library only.
 import argparse
 import os
 import shutil
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -29,6 +33,10 @@ SERVER_SBIN = Path("/usr/local/sbin")
 SYSTEM_PYTHON = "/usr/bin/python3"
 # The packages a Server runs, relative to src/deadlift.
 SERVER_PACKAGES = ("core", "server")
+
+
+# The paths of deadlift.server.layout's Layout a launcher for the tests may set.
+LAYOUT_PATHS = ("lib", "state", "disk_used")
 
 
 def python_dir(lib: Path) -> Path:
@@ -101,10 +109,26 @@ def remove_retired_launchers(lib: Path) -> list[Path]:
     return removed
 
 
-def launcher_source(module: str, *, modules: Path, description: str) -> str:
-    """The launcher for ``module``, loading deadlift from ``modules`` and nowhere else."""
+def launcher_source(
+    module: str, *, modules: Path, description: str, layout: Mapping[str, Path] | None = None
+) -> str:
+    """The launcher for ``module``, loading deadlift from ``modules`` and nowhere else. With
+    ``layout``, for the tests only, it runs with those of deadlift.server.layout's paths
+    (``lib``, ``state``, ``disk_used``) in place of a Server's."""
     if not modules.is_absolute():
         raise ValueError(f"a launcher's modules directory must be absolute, not {modules}")
+    for name, path in (layout or {}).items():
+        if name not in LAYOUT_PATHS or not path.is_absolute():
+            raise ValueError(f"a launcher's {name} must be one of {LAYOUT_PATHS}, and absolute")
+    chosen = [
+        "from pathlib import Path  # noqa: E402",
+        "",
+        "from deadlift.server.layout import Layout, use  # noqa: E402",
+        "",
+        "use(Layout("
+        + ", ".join(f"{name}=Path({str(path)!r})" for name, path in (layout or {}).items())
+        + "))",
+    ]
     lines = [
         f"#!{SYSTEM_PYTHON} -I",
         f'"""{description}',
@@ -122,6 +146,7 @@ def launcher_source(module: str, *, modules: Path, description: str) -> str:
         "sys.dont_write_bytecode = True",
         f"sys.path.insert(0, {str(modules)!r})",
         "",
+        *([*chosen, ""] if layout else []),
         f"from {module} import main  # noqa: E402",
         "",
         "sys.exit(main(sys.argv[1:]))",
@@ -196,15 +221,26 @@ def install_package(source: Path, lib: Path, *, chown: bool) -> bool:
     return changed
 
 
-def install_launchers(launchers: Sequence[Launcher], *, lib: Path, sbin: Path, chown: bool) -> bool:
-    """Installs each launcher, loading the modules :func:`install_package` put under ``lib``.
-    Returns whether any changed."""
+def install_launchers(
+    launchers: Sequence[Launcher],
+    *,
+    lib: Path,
+    sbin: Path,
+    chown: bool,
+    layout: Mapping[str, Path] | None = None,
+) -> bool:
+    """Installs each launcher, loading the modules :func:`install_package` put under ``lib``,
+    and running with ``layout`` (for the tests: see :func:`launcher_source`). Returns whether
+    any changed."""
     changed = False
     for launcher in launchers:
         directory = sbin if launcher.where == "sbin" else lib
         _install_dir(directory, chown=chown)
         source = launcher_source(
-            launcher.module, modules=python_dir(lib), description=launcher.description
+            launcher.module,
+            modules=python_dir(lib),
+            description=launcher.description,
+            layout=layout,
         )
         changed |= install_bytes(source.encode(), directory / launcher.name, 0o755, chown=chown)
     return changed
@@ -212,16 +248,30 @@ def install_launchers(launchers: Sequence[Launcher], *, lib: Path, sbin: Path, c
 
 def main(argv: Sequence[str]) -> int:
     """Installs the Server's code from this checkout into ``--lib`` and ``--sbin``, as bootstrap
-    does: for the tests, which install it on a fake Server with ``--no-chown``."""
+    does: for the tests, which install it on a fake Server with ``--no-chown``, its state in
+    ``--state`` and how full its disk is in ``--disk-used-file``."""
     parser = argparse.ArgumentParser(prog="deadlift.bootstrap.install")
     parser.add_argument("--lib", type=Path, default=SERVER_LIB)
     parser.add_argument("--sbin", type=Path, default=SERVER_SBIN)
+    parser.add_argument("--state", type=Path, help="the fake Server's state directory")
+    parser.add_argument(
+        "--disk-used-file", type=Path, help="a file holding the fake Server's disk use, in %%"
+    )
     parser.add_argument("--no-chown", action="store_true", help="leave files owned by the caller")
     args = parser.parse_args(argv)
     lib: Path = args.lib.absolute()
     sbin: Path = args.sbin.absolute()
+    state: Path | None = args.state
+    disk_used: Path | None = args.disk_used_file
     chown = not args.no_chown
+    layout: dict[str, Path] = {}
+    if lib != SERVER_LIB:
+        layout["lib"] = lib
+    if state is not None:
+        layout["state"] = state.absolute()
+    if disk_used is not None:
+        layout["disk_used"] = disk_used.absolute()
     source = Path(__file__).resolve().parent.parent
     install_package(source, lib, chown=chown)
-    install_launchers(LAUNCHERS, lib=lib, sbin=sbin, chown=chown)
+    install_launchers(LAUNCHERS, lib=lib, sbin=sbin, chown=chown, layout=layout or None)
     return 0

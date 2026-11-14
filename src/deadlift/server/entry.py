@@ -23,9 +23,9 @@ reason saying to re-run bootstrap, rather than misread.
 Exit codes: 2 when it refuses, changing and running nothing; otherwise the deploy script's
 (0 done, 1 failed, 2 refused, 75 skipped).
 
-Settings, for the tests only: DEADLIFT_STATE_DIR and DEADLIFT_LIB_DIR move the Server's state
-and the installed deploy script. sudo's env_reset never passes them on, so on a Server they're
-always the defaults.
+Where the Server's state and the installed deploy script are is fixed (deadlift.server.layout),
+never read from the environment, so no variable a caller manages to pass through sudo chooses
+what runs as root or where it writes.
 """
 
 import lzma
@@ -42,6 +42,7 @@ from typing import NoReturn
 from deadlift.core.outcome import Stop, reason
 from deadlift.core.outcome import refuse as stop_refused
 from deadlift.core.process import Stream, run, scrubbed_env
+from deadlift.server.layout import layout
 
 # The delivery protocols this entry command speaks. A new one is added here, by bootstrap, before
 # any `deliver` sends it.
@@ -51,15 +52,8 @@ MAX_DELIVERY_BYTES = 1024 * 1024
 # What a delivery may hold.
 DELIVERED = ("compose.yaml", "token")
 # What the deploy script is given of this process's environment: what sudo's env_reset (and the
-# tests' stand-in for it) leaves, and the tests' settings, which a Server never has.
-DEPLOY_ENV = (
-    "PATH",
-    "HOME",
-    "DOCKER_HOST",
-    "DEADLIFT_STATE_DIR",
-    "DEADLIFT_LIB_DIR",
-    "DEADLIFT_DISK_USED",
-)
+# tests' stand-in for it) leaves.
+DEPLOY_ENV = ("PATH", "HOME", "DOCKER_HOST")
 
 
 def refuse(why: str) -> NoReturn:
@@ -127,8 +121,7 @@ def _read_stdin(archive: Path) -> int:
 
 
 def _entry(argv: Sequence[str]) -> int:
-    state = Path(os.environ.get("DEADLIFT_STATE_DIR") or "/srv/deadlift")
-    lib = Path(os.environ.get("DEADLIFT_LIB_DIR") or "/usr/local/lib/deadlift")
+    state, lib = layout().state, layout().lib
 
     # The App, from the deploy user that sudo says called us.
     app = app_of(os.environ.get("SUDO_USER", ""), state)

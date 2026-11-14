@@ -107,6 +107,26 @@ def test_a_launcher_names_its_modules_directory_and_no_other() -> None:
         launcher_source("m", modules=Path("python"), description="E.")
 
 
+def test_a_servers_launcher_runs_with_the_servers_fixed_paths() -> None:
+    source = launcher_source("deadlift.server.entry", modules=Path("/x/python"), description="E.")
+    assert "layout" not in source
+
+
+def test_a_launcher_for_the_tests_writes_in_the_paths_it_runs_with() -> None:
+    source = launcher_source(
+        "deadlift.server.entry",
+        modules=Path("/x/python"),
+        description="E.",
+        layout={"state": Path("/t/srv"), "disk_used": Path("/t/disk-used")},
+    )
+    assert "use(Layout(state=Path('/t/srv'), disk_used=Path('/t/disk-used')))" in source
+    assert source.index("use(Layout(") < source.index("from deadlift.server.entry import main")
+    with pytest.raises(ValueError, match="absolute"):
+        launcher_source("m", modules=Path("/x"), description="E.", layout={"state": Path("t")})
+    with pytest.raises(ValueError):
+        launcher_source("m", modules=Path("/x"), description="E.", layout={"home": Path("/t")})
+
+
 def test_the_server_gets_core_and_server_only(tmp_path: Path) -> None:
     install_package(SOURCE, tmp_path, chown=False)
     root = python_dir(tmp_path)

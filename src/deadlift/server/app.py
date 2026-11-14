@@ -51,8 +51,9 @@ from typing import NoReturn, cast
 from deadlift.core.lock import server_lock
 from deadlift.core.outcome import Exit, Stop, fail, output, reason, refuse, run_main
 from deadlift.core.process import Completed, Stream, run, scrubbed_env
+from deadlift.server.layout import layout
 
-STATE = Path("/srv/deadlift")
+STATE = layout().state
 ENTRY_COMMAND = Path("/usr/local/sbin/deadlift-entry")
 SUDOERS = Path("/etc/sudoers.d")
 # Where the Apps' port blocks go: 20000-20099, 20100-20199 and so on.

@@ -5,8 +5,8 @@
 #   deadlift-<app> ALL=(root) NOPASSWD: /usr/local/sbin/deadlift-entry
 #
 # so it runs only the entry command, as installed on this fake Server, with SUDO_USER set to the
-# user who logged in and the environment reset, as sudo's env_reset does. The fake Server's
-# server.env adds what a real Server has at fixed paths: where its state and installed scripts are.
+# user who logged in and the environment reset, as sudo's env_reset does. Where the fake Server's
+# state and installed scripts are is written into its launchers, as a real Server's are fixed.
 set -euo pipefail
 
 server=${DEADLIFT_TEST_SERVER:?}
@@ -25,5 +25,4 @@ env=(
   SUDO_USER="$user"
 )
 if [[ -n ${DOCKER_HOST:-} ]]; then env+=(DOCKER_HOST="$DOCKER_HOST"); fi
-mapfile -t settings <"$server/server.env"
-exec env -i "${env[@]}" "${settings[@]}" "$server/sbin/deadlift-entry" "$@"
+exec env -i "${env[@]}" "$server/sbin/deadlift-entry" "$@"

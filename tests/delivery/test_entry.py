@@ -1,6 +1,7 @@
 """The entry command: what an App's CI can and can't make the Server do, whatever it sends."""
 
 import io
+import os
 import re
 import shutil
 import tarfile
@@ -20,6 +21,7 @@ from tests.support.harness import (
     Result,
     ServeMapping,
     Symlink,
+    collect,
     docker,
     example_template,
     get,
@@ -157,6 +159,41 @@ class TestTheDeliveryProtocol:
         assert sent.result.code == 2, sent.result.output
         assert matches(r"^deadlift: refused the delivery: .*protocol", sent.result.output, re.M)
         assert sent.containers == ""
+
+
+def test_the_environment_chooses_neither_what_the_entry_command_runs_nor_where_it_writes(
+    harness: Harness, scratch: Path
+) -> None:
+    server = harness.server()
+    app = server.apps["a"].name
+    ran = scratch / "planted-deploy-ran"
+    planted = scratch / "planted-lib"
+    planted.mkdir()
+    (planted / "deploy").write_text(f"#!/bin/sh\ntouch {ran}\n")
+    (planted / "deploy").chmod(0o755)
+    elsewhere = scratch / "planted-state"
+    (elsewhere / "apps" / app).mkdir(parents=True)
+    shutil.copyfile(server.state / "apps" / app / "app.conf", elsewhere / "apps" / app / "app.conf")
+
+    # As if sudo kept the caller's environment, which its env_reset doesn't.
+    result = collect(
+        [str(server.sbin / "deadlift-entry"), "--protocol", "1", "destroy", "feature-1"],
+        env={
+            "PATH": f"{server.bin}:/usr/local/bin:/usr/bin:/bin",
+            "HOME": str(scratch),
+            "SUDO_USER": f"deadlift-{app}",
+            **({"DOCKER_HOST": os.environ["DOCKER_HOST"]} if "DOCKER_HOST" in os.environ else {}),
+            "DEADLIFT_LIB_DIR": str(planted),
+            "DEADLIFT_STATE_DIR": str(elsewhere),
+            "DEADLIFT_DISK_USED": "0",
+        },
+        input=tar_of({"compose.yaml": example_template()}),
+    )
+
+    assert result.code == 0, result.output
+    assert matches(r"^deadlift: feature-1 isn't on this Server", result.output, re.M)
+    assert not ran.exists()
+    assert not (elsewhere / "deliveries").exists()
 
 
 def test_nothing_in_a_delivery_is_executed_the_token_included(
