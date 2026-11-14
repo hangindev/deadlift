@@ -440,7 +440,7 @@ def op_secrets(args: Sequence[str]) -> None:
             reason(f"{app}'s {kind}.env on this Server already holds that. Nothing was changed.")
             return
         _write_aside(file, content, 0o600).replace(file)
-        environment = "Dev" if kind == "dev" else kind
+        environment = "Dev" if kind == "dev" else "Feature"
         reason(
             f"put {app}'s {kind}.env on this Server. Its variables reach the template from the"
             f" next deploy of a {environment} Environment on."
