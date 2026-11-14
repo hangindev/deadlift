@@ -29,7 +29,6 @@ import sys
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import NoReturn
 
 REFUSED = 2
 
@@ -60,7 +59,7 @@ class Item:
 
     lead: int
     node: Node
-    key: str | None = None
+    key: str = ""
     comma: int | None = None
 
 
@@ -96,11 +95,11 @@ class Parser:
         self.name = name
         self.pos = 0
 
-    def fail(self, why: str, at: int | None = None) -> NoReturn:
+    def error(self, why: str, at: int | None = None) -> Refused:
         at = self.pos if at is None else at
         line = self.text.count("\n", 0, at) + 1
         column = at - (self.text.rfind("\n", 0, at) + 1) + 1
-        raise Refused(f"{self.name} isn't HuJSON: {why} at line {line}, column {column}")
+        return Refused(f"{self.name} isn't HuJSON: {why} at line {line}, column {column}")
 
     def skip(self) -> None:
         """Skips whitespace and comments."""
@@ -115,7 +114,7 @@ class Parser:
             elif text.startswith("/*", self.pos):
                 close = text.find("*/", self.pos + 2)
                 if close < 0:
-                    self.fail("a /* comment with no */")
+                    raise self.error("a /* comment with no */")
                 self.pos = close + 2
             else:
                 return
@@ -125,13 +124,13 @@ class Parser:
         node = self.value()
         self.skip()
         if self.pos != len(self.text):
-            self.fail("more after the end of the value")
+            raise self.error("more after the end of the value")
         return node
 
     def value(self) -> Node:
         text = self.text
         if self.pos >= len(text):
-            self.fail("the text ends where a value should be")
+            raise self.error("the text ends where a value should be")
         char = text[self.pos]
         if char == "{":
             return self.container(Object(self.pos, self.pos), "}")
@@ -149,7 +148,7 @@ class Parser:
         if number:
             self.pos = number.end()
             return Scalar(number.start(), number.end(), json.loads(number.group()))
-        self.fail(f"unexpected {char!r}")
+        raise self.error(f"unexpected {char!r}")
 
     def string_end(self) -> int:
         text = self.text
@@ -165,7 +164,7 @@ class Parser:
                 break
             else:
                 pos += 1
-        self.fail("a string with no closing quote")
+        raise self.error("a string with no closing quote")
 
     def container(self, node: Container, close: str) -> Container:
         self.pos += 1
@@ -173,23 +172,23 @@ class Parser:
             lead = self.pos
             self.skip()
             if self.pos >= len(self.text):
-                self.fail(f"no closing {close}", node.start)
+                raise self.error(f"no closing {close}", node.start)
             if self.text[self.pos] == close:
                 self.pos += 1
                 node.end = self.pos
                 return node
             if node.items and node.items[-1].comma is None:
-                self.fail(f"a missing comma or {close}")
+                raise self.error(f"a missing comma or {close}")
             lead = self.lead(lead)
-            key: str | None = None
+            key: str = ""
             if isinstance(node, Object):
                 if self.text[self.pos] != '"':
-                    self.fail("a key that isn't a string")
+                    raise self.error("a key that isn't a string")
                 start = self.pos
                 key = json.loads(self.text[start : self.string_end()])
                 self.skip()
                 if not self.text.startswith(":", self.pos):
-                    self.fail("a missing :")
+                    raise self.error("a missing :")
                 self.pos += 1
                 self.skip()
             item = Item(lead, self.value(), key)
@@ -222,12 +221,11 @@ def parse(text: str, name: str) -> Node:
 
 def meaning(node: Node) -> object:
     """The node as plain JSON data, for comparing entries with what the policy has."""
-    if isinstance(node, Scalar):
-        return node.value
-    assert isinstance(node, Container)
     if isinstance(node, Object):
         return {item.key: meaning(item.node) for item in node.items}
-    return [meaning(item.node) for item in node.items]
+    if isinstance(node, Array):
+        return [meaning(item.node) for item in node.items]
+    return node.value if isinstance(node, Scalar) else None
 
 
 def compact(node: Node) -> str:
@@ -276,7 +274,7 @@ class Source:
     """A parsed HuJSON file."""
 
     text: str
-    root: Node
+    root: "Object"
     unit: str
 
 
@@ -314,7 +312,6 @@ class Merge:
         additions: list[Item] = []
         for item in given.items:
             if isinstance(target, Object):
-                assert item.key is not None
                 here = f"{path}.{item.key}" if path else item.key
                 found = find_key(target, item.key)
                 if found is None:
@@ -334,9 +331,11 @@ class Merge:
             self.add(target, entries, additions, root=not path)
 
     def matching(self, have: Node, given: Node, entries: Source, path: str) -> None:
-        if isinstance(have, Object) and isinstance(given, Object):
-            self.into(have, entries, given, path)
-        elif isinstance(have, Array) and isinstance(given, Array):
+        if (
+            isinstance(have, Container)
+            and isinstance(given, Container)
+            and have.is_object == given.is_object
+        ):
             self.into(have, entries, given, path)
         elif meaning(have) != meaning(given):
             raise Refused(
@@ -359,8 +358,11 @@ class Merge:
         if inline and all("\n" not in t for t in texts):
             self.add_inline(target, [t.removeprefix(indent) for t in texts])
             return
-        body = (",\n").join(texts) + ("," if trailing else "")
-        blank = "\n" if root and target.items else ""
+        # The policy's sections, at its top level, are set off by blank lines.
+        blank = "\n" if root else ""
+        body = f",\n{blank}".join(texts) + ("," if trailing else "")
+        if not target.items:
+            blank = ""
         if not target.items:
             close = target.end - 1
             if inline:
@@ -404,7 +406,7 @@ def find_key(target: Object, key: str) -> Item | None:
             return item
     folded = key.casefold()
     for item in target.items:
-        if item.key is not None and item.key.casefold() == folded:
+        if item.key.casefold() == folded:
             return item
     return None
 
@@ -431,9 +433,13 @@ def read(path: str) -> Source:
         text = Path(path).read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError) as error:
         raise Refused(f"couldn't read {path}: {error}") from error
-    root = parse(text, path)
+    return source(text, path)
+
+
+def source(text: str, name: str) -> Source:
+    root = parse(text, name)
     if not isinstance(root, Object):
-        raise Refused(f"{path} isn't a HuJSON object")
+        raise Refused(f"{name} isn't a HuJSON object")
     return Source(text, root, indent_unit(text))
 
 
@@ -445,13 +451,15 @@ def merged(policy_path: str, entries_paths: Sequence[str]) -> tuple[str, list[st
     for entries_path in entries_paths:
         entries = read(entries_path)
         work = Merge(policy, uses_trailing_commas(policy.root, policy.text))
-        assert isinstance(policy.root, Object) and isinstance(entries.root, Object)
         work.into(policy.root, entries, entries.root, "")
-        for edit in sorted(work.edits, key=lambda e: e.start, reverse=True):
+        # From the end back, so each edit's place is still where it was found. Two at one
+        # place go in the order they were made.
+        edits = sorted(enumerate(work.edits), key=lambda e: (e[1].start, e[0]), reverse=True)
+        for _, edit in edits:
             text = text[: edit.start] + edit.text + text[edit.end :]
         said += work.said
         # The next entries merge into this result.
-        policy = Source(text, parse(text, policy_path), policy.unit)
+        policy = source(text, policy_path)
     return text, said
 
 

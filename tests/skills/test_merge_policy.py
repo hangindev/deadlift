@@ -58,7 +58,9 @@ def test_adds_a_section_the_policy_lacks_at_the_end_keeping_its_comments(tmp_pat
     merged = merge(tmp_path, policy, entries)
 
     assert merged.status == 0, merged.stderr
-    assert merged.stdout == """// Our tailnet.
+    assert (
+        merged.stdout
+        == """// Our tailnet.
 {
 	// Who owns which tag.
 	"tagOwners": {
@@ -75,6 +77,7 @@ def test_adds_a_section_the_policy_lacks_at_the_end_keeping_its_comments(tmp_pat
 	],
 }
 """
+    )
 
 
 # A policy laid out as Tailscale's default one is, with the App's entries as `deadlift app add`
@@ -148,7 +151,9 @@ def test_appends_each_entry_after_the_last_of_its_section(tmp_path: Path) -> Non
     merged = merge(tmp_path, DEFAULT_LIKE, APP_ENTRIES)
 
     assert merged.status == 0, merged.stderr
-    assert merged.stdout == """// Example/default ACLs for unrestricted connections.
+    assert (
+        merged.stdout
+        == """// Example/default ACLs for unrestricted connections.
 {
 	// Define the tags which can be applied to devices and by which users.
 	// "tagOwners": {
@@ -204,6 +209,7 @@ def test_appends_each_entry_after_the_last_of_its_section(tmp_path: Path) -> Non
 	},
 }
 """
+    )
     assert "deadlift: added tagOwners" in merged.stderr
 
 
@@ -215,3 +221,265 @@ def test_merging_again_changes_nothing(tmp_path: Path) -> None:
     assert again.status == 0, again.stderr
     assert again.stdout == once
     assert "nothing was added" in again.stderr
+
+
+def test_merges_into_sections_the_policy_has_level_by_level(tmp_path: Path) -> None:
+    policy = """{
+  "tagOwners": {
+    "tag:deadlift-server": ["group:ops"],
+    "tag:deadlift-svc": ["autogroup:admin"]
+  },
+  "autoApprovers": {
+    "routes": {"10.0.0.0/8": ["tag:router"]}
+  }
+}
+"""
+    entries = """{
+	"tagOwners": {
+		// Servers, joined by an admin in the provision wizard.
+		"tag:deadlift-server": ["autogroup:admin"],
+		"tag:deadlift-svc": ["autogroup:admin"],
+	},
+	"autoApprovers": {
+		// Any Server may serve any App's Service, with no approval by hand.
+		"services": {
+			"tag:deadlift-svc": ["tag:deadlift-server"],
+		},
+	},
+}
+"""
+
+    merged = merge(tmp_path, policy, entries)
+
+    assert merged.status == 0, merged.stderr
+    assert (
+        merged.stdout
+        == """{
+  "tagOwners": {
+    "tag:deadlift-server": ["group:ops", "autogroup:admin"],
+    "tag:deadlift-svc": ["autogroup:admin"]
+  },
+  "autoApprovers": {
+    "routes": {"10.0.0.0/8": ["tag:router"]},
+    // Any Server may serve any App's Service, with no approval by hand.
+    "services": {
+      "tag:deadlift-svc": ["tag:deadlift-server"],
+    }
+  }
+}
+"""
+    )
+
+
+def test_an_entry_the_policy_has_laid_out_otherwise_is_not_added_again(tmp_path: Path) -> None:
+    policy = """{
+	"grants": [
+		{"src": ["tag:deadlift-ci-shop"], "dst": ["tag:deadlift-server"], "ip": ["tcp:22"]},
+	],
+}
+"""
+
+    merged = merge(
+        tmp_path,
+        policy,
+        '{"grants": [{"ip": ["tcp:22"], "dst": ["tag:deadlift-server"],'
+        ' "src": ["tag:deadlift-ci-shop"]}]}',
+    )
+
+    assert merged.status == 0, merged.stderr
+    assert merged.stdout == policy
+
+
+def test_matches_sections_whatever_their_case(tmp_path: Path) -> None:
+    policy = """{
+	"TagOwners": {
+		"tag:ops": ["autogroup:admin"],
+	},
+}
+"""
+
+    merged = merge(tmp_path, policy, '{"tagOwners": {"tag:deadlift-ci-shop": ["autogroup:admin"]}}')
+
+    assert merged.status == 0, merged.stderr
+    assert (
+        merged.stdout
+        == """{
+	"TagOwners": {
+		"tag:ops": ["autogroup:admin"],
+		"tag:deadlift-ci-shop": ["autogroup:admin"],
+	},
+}
+"""
+    )
+
+
+def test_merges_several_entries_files_in_turn(tmp_path: Path) -> None:
+    merged = merge(
+        tmp_path,
+        "{\n}\n",
+        '{"tagOwners": {"tag:deadlift-svc": ["group:ops"]}}',
+        '{"tagOwners": {"tag:deadlift-ci-shop": ["group:ops"]}}',
+    )
+
+    assert merged.status == 0, merged.stderr
+    assert (
+        merged.stdout
+        == """{
+	"tagOwners": {"tag:deadlift-svc": ["group:ops"], "tag:deadlift-ci-shop": ["group:ops"]},
+}
+"""
+    )
+
+
+def test_adds_a_comma_where_the_policy_ends_without_one(tmp_path: Path) -> None:
+    policy = """{
+    "grants": [
+        {"src": ["autogroup:member"], "dst": ["tag:web"], "ip": ["tcp:443"]}
+    ],
+    "ssh": []
+}
+"""
+    entries = """{
+  "grants": [{"src": ["tag:deadlift-ci-shop"], "dst": ["tag:deadlift-server"], "ip": ["tcp:22"]}],
+  "ssh": [
+    {
+      "action": "accept",
+      "src": ["tag:deadlift-ci-shop"],
+      "dst": ["tag:deadlift-server"],
+      "users": ["deadlift-shop"]
+    }
+  ]
+}
+"""
+
+    merged = merge(tmp_path, policy, entries)
+
+    assert merged.status == 0, merged.stderr
+    assert (
+        merged.stdout
+        == """{
+    "grants": [
+        {"src": ["autogroup:member"], "dst": ["tag:web"], "ip": ["tcp:443"]},
+        {"src": ["tag:deadlift-ci-shop"], "dst": ["tag:deadlift-server"], "ip": ["tcp:22"]}
+    ],
+    "ssh": [
+        {
+            "action": "accept",
+            "src": ["tag:deadlift-ci-shop"],
+            "dst": ["tag:deadlift-server"],
+            "users": ["deadlift-shop"]
+        }
+    ]
+}
+"""
+    )
+
+
+def only_added(before: str, after: str) -> list[str]:
+    """The lines ``after`` adds to ``before``, failing if it changes or drops any line other
+    than by adding a comma at its end."""
+    import difflib
+
+    added: list[str] = []
+    old, new = before.split("\n"), after.split("\n")
+    for tag, i1, i2, j1, j2 in difflib.SequenceMatcher(a=old, b=new).get_opcodes():
+        if tag == "insert":
+            added += new[j1:j2]
+        elif tag == "replace":
+            assert i2 - i1 <= j2 - j1, (old[i1:i2], new[j1:j2])
+            for k, line in enumerate(old[i1:i2]):
+                assert new[j1 + k] in (line, f"{line},"), (line, new[j1 + k])
+            added += new[j1 + i2 - i1 : j2]
+        else:
+            assert tag == "equal", (tag, old[i1:i2])
+    return added
+
+
+def test_keeps_the_provision_wizards_comments_and_the_policys_own(tmp_path: Path) -> None:
+    provision = (ROOT / "cli" / "tailscale-policy.hujson").read_text(encoding="utf-8")
+    body = [line for line in provision.split("\n") if not line.startswith("//")]
+
+    merged = merge(tmp_path, DEFAULT_LIKE, "\n".join(body), APP_ENTRIES)
+
+    assert merged.status == 0, merged.stderr
+    added = [line.strip() for line in only_added(DEFAULT_LIKE, merged.stdout)]
+    for line in body:
+        if line.strip().startswith("//"):
+            assert line.strip() in added, line
+    again = merge(tmp_path, merged.stdout, "\n".join(body), APP_ENTRIES)
+    assert again.stdout == merged.stdout
+
+
+def test_refuses_a_policy_that_isnt_hujson(tmp_path: Path) -> None:
+    merged = merge(
+        tmp_path,
+        '{\n\t"grants": [\n\t\t{"src": ["*"]}\n\t\t{"dst": ["*"]},\n\t],\n}\n',
+        APP_ENTRIES,
+    )
+
+    assert merged.status == 2
+    assert merged.stdout == ""
+    assert merged.stderr.startswith("deadlift: ")
+    assert "line 4" in merged.stderr
+
+
+def test_refuses_an_entry_that_contradicts_the_policy(tmp_path: Path) -> None:
+    merged = merge(
+        tmp_path,
+        '{\n\t"randomizeClientPort": false,\n}\n',
+        '{"randomizeClientPort": true}',
+    )
+
+    assert merged.status == 2
+    assert merged.stdout == ""
+    assert "randomizeClientPort" in merged.stderr
+    assert "Nothing was merged" in merged.stderr
+
+
+def test_sets_each_new_section_off_with_a_blank_line(tmp_path: Path) -> None:
+    merged = merge(
+        tmp_path,
+        '{\n\t"ssh": [],\n}\n',
+        '{"tagOwners": {"tag:deadlift-server": ["autogroup:admin"]},'
+        ' "grants": [{"src": ["autogroup:member"], "dst": ["tag:deadlift-server"],'
+        ' "ip": ["tcp:22"]}]}',
+    )
+
+    assert merged.status == 0, merged.stderr
+    assert (
+        merged.stdout
+        == """{
+	"ssh": [],
+
+	"tagOwners": {"tag:deadlift-server": ["autogroup:admin"]},
+
+	"grants": [{"src": ["autogroup:member"], "dst": ["tag:deadlift-server"], "ip": ["tcp:22"]}],
+}
+"""
+    )
+
+
+def test_opens_up_an_empty_section_on_one_line_for_an_entry_on_several(tmp_path: Path) -> None:
+    entries = """{
+	"ssh": [
+		{
+			"action": "accept",
+			"src": ["tag:deadlift-ci-shop"],
+		},
+	],
+}
+"""
+
+    merged = merge(tmp_path, '{\n\t"ssh": [],\n\t"tests": [ ],\n}\n', entries)
+
+    assert merged.status == 0, merged.stderr
+    assert merged.stdout == """{
+	"ssh": [
+		{
+			"action": "accept",
+			"src": ["tag:deadlift-ci-shop"],
+		},
+	],
+	"tests": [ ],
+}
+"""
