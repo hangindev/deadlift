@@ -13,6 +13,7 @@ import json
 import os
 import re
 import shlex
+import ssl
 import urllib.error
 import urllib.request
 from collections.abc import Sequence
@@ -170,6 +171,12 @@ def tailscale_api(method: str, path: str, body: object = None) -> ApiAnswer:
     except (urllib.error.URLError, OSError, ValueError) as error:
         why = error.reason if isinstance(error, urllib.error.URLError) else error
         tell(f"{api}: {why}")
+        if isinstance(why, ssl.SSLCertVerificationError):
+            tell(
+                "The Python running deadlift may have no CA certificates. A python.org Python"
+                " on macOS gets them from its Install Certificates.command, in its folder in"
+                " /Applications."
+            )
         return ApiAnswer(0, "")
 
 

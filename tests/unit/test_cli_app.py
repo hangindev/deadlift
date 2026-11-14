@@ -2,15 +2,20 @@
 Tailscale API, apart from SSH and HTTP."""
 
 import json
+import ssl
+import urllib.error
+from typing import NoReturn
 
 import pytest
 
+import deadlift.cli.app
 from deadlift.cli.app import (
     AppArgs,
     app_policy,
     parse_app_args,
     service_matches,
     service_ports,
+    tailscale_api,
 )
 from deadlift.cli.common import Usage, is_server_name
 from deadlift.core.names import app_name_problem, is_app_name
@@ -132,3 +137,22 @@ def test_an_apps_policy_entries_let_its_ci_reach_only_ssh_as_its_deploy_user() -
             }
         ],
     }
+
+
+def test_a_python_with_no_ca_certificates_is_told_how_to_get_them(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # As a python.org Python on macOS answers before its Install Certificates.command has run.
+    def refuse(*_args: object, **_kwargs: object) -> NoReturn:
+        raise urllib.error.URLError(
+            ssl.SSLCertVerificationError(1, "certificate verify failed: unable to get local issuer")
+        )
+
+    monkeypatch.setattr(deadlift.cli.app._OPENER, "open", refuse)  # pyright: ignore[reportPrivateUsage]
+
+    answer = tailscale_api("GET", "services")
+
+    assert answer.status == 0
+    said = capsys.readouterr().err
+    assert "certificate verify failed" in said
+    assert "Install Certificates.command" in said
