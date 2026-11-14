@@ -89,13 +89,19 @@ describe("deadlift server bootstrap", () => {
       /name=userns/,
     );
     // What runs as root is what bootstrap installed, owned by root and writable by no one else.
+    // Each is a launcher for deadlift's Python, installed under lib/deadlift/python (ADR 0004).
     for (const [installed, source] of [
-      ["/usr/local/sbin/deadlift-entry", "server/entry.sh"],
-      ["/usr/local/lib/deadlift/deploy.sh", "server/deploy.sh"],
-      ["/usr/local/lib/deadlift/template.sh", "server/template.sh"],
+      ["/usr/local/sbin/deadlift-entry", "server/entry.py"],
+      ["/usr/local/lib/deadlift/deploy.sh", "server/deploy.py"],
+      ["/usr/local/lib/deadlift/template.sh", "server/template.py"],
     ] as const) {
       expect(await ok("stat", "--format", "%U:%G %a", installed)).toBe("root:root 755");
-      expect(await readFile(installed, "utf8")).toBe(await readFile(join(repo, source), "utf8"));
+      expect((await readFile(installed, "utf8")).split("\n")[0]).toBe("#!/usr/bin/python3 -I");
+      const module = join("/usr/local/lib/deadlift/python/deadlift", source);
+      expect(await ok("stat", "--format", "%U:%G %a", module)).toBe("root:root 644");
+      expect(await readFile(module, "utf8")).toBe(
+        await readFile(join(repo, "src/deadlift", source), "utf8"),
+      );
     }
     // The Server-wide settings, with the disk thresholds' defaults.
     const settings = await ok("sudo", "cat", "/srv/deadlift/settings");

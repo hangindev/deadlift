@@ -83,11 +83,7 @@ SETTINGS_DEFAULTS = ("feature_deploy_disk_limit=80", "watchdog_disk_limit=90")
 # The Server's scripts still in Bash while the port to Python is under way, sent in server/
 # beside deadlift/, and where each is installed. A script's port adds its Launcher at the same
 # path, which then wins, and drops its line here.
-BASH_SCRIPTS: tuple[tuple[str, Path], ...] = (
-    ("entry.sh", SERVER_SBIN / "deadlift-entry"),
-    ("deploy.sh", SERVER_LIB / "deploy.sh"),
-    ("template.sh", SERVER_LIB / "template.sh"),
-)
+BASH_SCRIPTS: tuple[tuple[str, Path], ...] = ()
 
 # What each installed entry point is, for the log. One with no line here is installed quietly.
 INSTALLED_WHAT: dict[Path, str] = {

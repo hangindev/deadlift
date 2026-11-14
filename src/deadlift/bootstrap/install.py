@@ -51,6 +51,24 @@ class Launcher:
 # command, sudo's rule, systemd, `deadlift app` over SSH) doesn't change.
 LAUNCHERS: tuple[Launcher, ...] = (
     Launcher(
+        "sbin",
+        "deadlift-entry",
+        "deadlift.server.entry",
+        "deadlift-entry: a Server's one way in for an App's CI (ADR 0001).",
+    ),
+    Launcher(
+        "lib",
+        "deploy.sh",
+        "deadlift.server.deploy",
+        "deadlift's deploy script: runs one operation on one App's Environments, or the watchdog.",
+    ),
+    Launcher(
+        "lib",
+        "template.sh",
+        "deadlift.server.template",
+        "deadlift's template check: what an App's Compose template may hold (ADR 0001).",
+    ),
+    Launcher(
         "lib",
         "app.sh",
         "deadlift.server.app",
