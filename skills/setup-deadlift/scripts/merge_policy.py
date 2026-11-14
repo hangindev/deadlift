@@ -465,7 +465,11 @@ def merged(policy_path: str, entries_paths: Sequence[str]) -> tuple[str, list[st
 
 def main(argv: Sequence[str]) -> int:
     if len(argv) < 2:
-        sys.stderr.write("Usage: python3 merge_policy.py <policy.hujson> <entries.hujson>...\n")
+        sys.stderr.write(
+            "deadlift: merge_policy.py needs the policy and at least one file of entries to merge"
+            " into it. Nothing was merged.\n"
+            "Usage: python3 merge_policy.py <policy.hujson> <entries.hujson>...\n"
+        )
         return REFUSED
     try:
         text, said = merged(argv[0], argv[1:])

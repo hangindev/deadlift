@@ -486,3 +486,20 @@ def test_opens_up_an_empty_section_on_one_line_for_an_entry_on_several(tmp_path:
 }
 """
     )
+
+
+def test_refuses_being_run_without_a_policy_and_entries_saying_why(tmp_path: Path) -> None:
+    policy_file = tmp_path / "policy.hujson"
+    policy_file.write_text("{}\n", encoding="utf-8")
+
+    done = subprocess.run(
+        [sys.executable, "-I", str(SCRIPT), str(policy_file)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert done.returncode == 2
+    assert done.stdout == ""
+    assert done.stderr.startswith("deadlift: ")
+    assert "Usage: python3 merge_policy.py <policy.hujson> <entries.hujson>..." in done.stderr
