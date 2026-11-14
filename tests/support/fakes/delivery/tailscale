@@ -1,84 +1,107 @@
-#!/usr/bin/env bash
-# A fake `tailscale` for the delivery tests, installed on the fake Server's PATH ahead of any real
-# one. It answers only what deadlift asks of Tailscale on a Server, keeping each Service's Serve
-# mappings as Tailscale would:
-#
-#   tailscale status --json                                   the tailnet's MagicDNS suffix
-#   tailscale serve --service=svc:<app> --https=<port> [--bg] <target>   map a port
-#   tailscale serve --service=svc:<app> --https=<port> off    unmap it; fails when it isn't mapped
-#   tailscale serve status --json                             every Service's mappings
-#   tailscale serve clear svc:<app>                           unmap every port of the Service
-#
-# Every call is logged, and anything else fails, so a call deadlift shouldn't make shows up.
-# Its state lives beside the fake Server's bin directory, in tailscale/.
-set -euo pipefail
+#!/usr/bin/env python3
+"""A fake `tailscale` for the delivery tests, installed on the fake Server's PATH ahead of any real
+one. It answers only what deadlift asks of Tailscale on a Server, keeping each Service's Serve
+mappings as Tailscale would:
 
-state=$(cd "$(dirname "$0")/.." && pwd)/tailscale
-mkdir -p "$state"
-mappings=$state/serve
-touch "$mappings"
-printf '%s\n' "$*" >>"$state/calls.log"
+  tailscale status --json                                   the tailnet's MagicDNS suffix
+  tailscale serve --service=svc:<app> --https=<port> [--bg] <target>   map a port
+  tailscale serve --service=svc:<app> --https=<port> off    unmap it; fails when it isn't mapped
+  tailscale serve status --json                             every Service's mappings
+  tailscale serve clear svc:<app>                           unmap every port of the Service
 
-suffix=tailtest.ts.net
+Every call is logged, and anything else fails, so a call deadlift shouldn't make shows up.
+Its state lives beside the fake Server's bin directory, in tailscale/. Standard library only.
+"""
 
-if [[ $* == "status --json" ]]; then
-  jq -n --arg suffix "$suffix" '{MagicDNSSuffix: $suffix}'
-  exit 0
-fi
+import json
+import sys
+from pathlib import Path
 
-if [[ $* == "serve status --json" ]]; then
-  jq -Rn --arg suffix "$suffix" '
-    [inputs | split(" ") | {service: .[0], port: .[1], target: .[2]}]
-    | if length == 0 then {} else
-        {Services: (group_by(.service) | map({
-          key: .[0].service,
-          value: {
-            TCP: (map({key: .port, value: {HTTPS: true}}) | from_entries),
-            Web: (map({
-              key: "\(.service | ltrimstr("svc:")).\($suffix):\(.port)",
-              value: {Handlers: {"/": {Proxy: .target}}}
-            }) | from_entries)
-          }
-        }) | from_entries)}
-      end' <"$mappings"
-  exit 0
-fi
+SUFFIX = "tailtest.ts.net"
 
-if [[ ${1:-} == serve && ${2:-} == clear && ${3:-} == svc:* && $# == 3 ]]; then
-  grep -v "^$3 " "$mappings" >"$mappings.new" || true
-  mv "$mappings.new" "$mappings"
-  exit 0
-fi
 
-if [[ ${1:-} == serve ]]; then
-  shift
-  service='' port='' target=''
-  for arg in "$@"; do
-    case $arg in
-      --service=svc:*) service=${arg#--service=} ;;
-      --https=*) port=${arg#--https=} ;;
-      --bg) ;;
-      -*) echo "fake tailscale: unknown flag $arg" >&2 && exit 1 ;;
-      *) target=$arg ;;
-    esac
-  done
-  if [[ -z $service || -z $port || -z $target ]]; then
-    echo "fake tailscale: serve needs --service=svc:<name>, --https=<port> and a target" >&2
-    exit 1
-  fi
-  others=$(grep -v "^$service $port " "$mappings" || true)
-  if [[ $target == off ]]; then
-    if ! grep -q "^$service $port " "$mappings"; then
-      echo "error: handler does not exist" >&2
-      exit 1
-    fi
-    printf '%s' "${others:+$others$'\n'}" >"$mappings.new"
-  else
-    printf '%s%s %s %s\n' "${others:+$others$'\n'}" "$service" "$port" "$target" >"$mappings.new"
-  fi
-  mv "$mappings.new" "$mappings"
-  exit 0
-fi
+def say(text: str) -> None:
+    sys.stderr.write(f"{text}\n")
 
-echo "fake tailscale: deadlift has no reason to run 'tailscale $*'" >&2
-exit 1
+
+def pretty(value: object) -> str:
+    """``value`` as the real tailscale prints JSON: indented."""
+    return json.dumps(value, indent=2, ensure_ascii=False) + "\n"
+
+
+def save(file: Path, lines: list[str]) -> None:
+    """Writes ``lines`` to ``file`` aside, then renames it over, as the mappings change."""
+    aside = file.with_name(f"{file.name}.new")
+    aside.write_text("".join(f"{line}\n" for line in lines))
+    aside.replace(file)
+
+
+def serve_status(mappings: list[str]) -> object:
+    """Every Service's mappings, as `tailscale serve status --json` shows them."""
+    services: dict[str, dict[str, dict[str, object]]] = {}
+    for line in mappings:
+        service, port, target = ([*line.split(" "), "", ""])[:3]
+        config = services.setdefault(service, {"TCP": {}, "Web": {}})
+        config["TCP"][port] = {"HTTPS": True}
+        name = service.removeprefix("svc:")
+        config["Web"][f"{name}.{SUFFIX}:{port}"] = {"Handlers": {"/": {"Proxy": target}}}
+    if not services:
+        return {}
+    return {"Services": dict(sorted(services.items()))}
+
+
+def main(argv: list[str]) -> int:
+    state = Path(sys.argv[0]).absolute().parent.parent / "tailscale"
+    state.mkdir(parents=True, exist_ok=True)
+    file = state / "serve"
+    file.touch()
+    with (state / "calls.log").open("a") as log:
+        log.write(" ".join(argv) + "\n")
+    mappings = [line for line in file.read_text().split("\n") if line]
+
+    if argv == ["status", "--json"]:
+        sys.stdout.write(pretty({"MagicDNSSuffix": SUFFIX}))
+        return 0
+
+    if argv == ["serve", "status", "--json"]:
+        sys.stdout.write(pretty(serve_status(mappings)))
+        return 0
+
+    if len(argv) == 3 and argv[:2] == ["serve", "clear"] and argv[2].startswith("svc:"):
+        kept = [line for line in mappings if not line.startswith(f"{argv[2]} ")]
+        save(file, kept)
+        return 0
+
+    if argv[:1] == ["serve"]:
+        service = port = target = ""
+        for arg in argv[1:]:
+            if arg.startswith("--service=svc:"):
+                service = arg.removeprefix("--service=")
+            elif arg.startswith("--https="):
+                port = arg.removeprefix("--https=")
+            elif arg == "--bg":
+                pass
+            elif arg.startswith("-"):
+                say(f"fake tailscale: unknown flag {arg}")
+                return 1
+            else:
+                target = arg
+        if not service or not port or not target:
+            say("fake tailscale: serve needs --service=svc:<name>, --https=<port> and a target")
+            return 1
+        key = f"{service} {port} "
+        others = [line for line in mappings if not line.startswith(key)]
+        if target == "off":
+            if len(others) == len(mappings):
+                say("error: handler does not exist")
+                return 1
+        else:
+            others.append(f"{key}{target}")
+        save(file, others)
+        return 0
+
+    say(f"fake tailscale: deadlift has no reason to run 'tailscale {' '.join(argv)}'")
+    return 1
+
+
+sys.exit(main(sys.argv[1:]))

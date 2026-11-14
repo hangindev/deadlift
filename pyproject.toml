@@ -30,7 +30,18 @@ addopts = ["--strict-markers", "--import-mode=importlib"]
 norecursedirs = [".claude", ".venv", "tests/delivery", "tests/server_setup"]
 
 [tool.pyright]
-include = ["src", "tests", "actions", "bin"]
+# A directory brings in only its *.py files, so each Python program without the suffix is named.
+include = [
+  "src",
+  "tests",
+  "actions",
+  "bin",
+  "tests/support/fakes/delivery/tailscale",
+  "tests/support/fakes/provision/ssh",
+  "tests/support/fakes/provision/tailscale",
+  "tests/support/fakes/runner/docker",
+  "tests/support/fakes/runner/ssh",
+]
 exclude = ["**/.venv", ".claude"]
 extraPaths = ["src"]
 pythonVersion = "3.12"
@@ -42,6 +53,14 @@ venv = ".venv"
 line-length = 100
 target-version = "py312"
 extend-exclude = [".claude"]
+# The Python fakes, named as the programs they stand in for, so without the .py suffix.
+extend-include = [
+  "tests/support/fakes/delivery/tailscale",
+  "tests/support/fakes/provision/ssh",
+  "tests/support/fakes/provision/tailscale",
+  "tests/support/fakes/runner/docker",
+  "tests/support/fakes/runner/ssh",
+]
 
 [tool.ruff.lint]
 select = [

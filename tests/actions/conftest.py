@@ -1,5 +1,8 @@
 """Fixtures for the actions tests: deadlift's composite actions and starter workflows, run on a
-fake runner against a fake GitHub. Nothing reaches the network or Docker."""
+fake runner against a fake GitHub. Nothing reaches the network or Docker.
+
+The one thing they need that a Server doesn't have is jq: the fake `gh` applies `--jq` filters
+with the real jq, as the real gh applies them, because the starter workflows' filters are jq."""
 
 from collections.abc import Callable, Iterator
 from contextlib import ExitStack

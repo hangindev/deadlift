@@ -149,9 +149,8 @@ def free_port_block(taken: Sequence[int]) -> int:
 
 
 def require_tools() -> None:
-    for tool in ("flock", "jq"):
-        if shutil.which(tool) is None:
-            raise RuntimeError(f"The delivery tests need {tool}, which every Server has")
+    if shutil.which("flock") is None:
+        raise RuntimeError("The delivery tests need flock, which every Server has")
     check = subprocess.run(["python3", "-I", "-c", "import yaml"], capture_output=True, check=False)
     if check.returncode != 0:
         raise RuntimeError(
