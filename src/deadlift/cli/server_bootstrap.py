@@ -20,6 +20,7 @@ import tarfile
 from collections.abc import Sequence
 from pathlib import Path
 
+from deadlift.cli.common import run_command, usage
 from deadlift.core.outcome import Exit, reason
 from deadlift.core.process import Stream, scrubbed_env, start
 
@@ -28,8 +29,6 @@ CHECKOUT = Path(__file__).resolve().parents[3]
 # The packages a Server needs to bootstrap, relative to src/deadlift.
 SENT_PACKAGES = ("core", "server", "bootstrap")
 SSH_UNREACHABLE = 255
-
-USAGE = "Usage: deadlift server bootstrap <server>\n"
 
 # Run by root's shell on the Server, with the tar on stdin: unpacked into a directory only root
 # can read, bootstrapped from, and removed. Commands there read nothing from the maintainer's
@@ -112,12 +111,14 @@ def bootstrap_server(server: str) -> int:
     return code
 
 
-def main(argv: Sequence[str]) -> int:
-    """``deadlift server bootstrap <server>``, with ``argv`` the arguments after the command."""
+def _bootstrap(argv: Sequence[str]) -> int:
     why = "server bootstrap needs one <server>" if len(argv) != 1 else server_problem(argv[0])
     if why is not None:
-        reason(why)
-        sys.stderr.write(USAGE)
-        sys.stderr.flush()
-        return int(Exit.REFUSED)
+        # Bad usage: the reason line, then all of deadlift's usage, as Bash's bin/deadlift said it.
+        usage(why)
     return bootstrap_server(argv[0])
+
+
+def main(argv: Sequence[str]) -> int:
+    """``deadlift server bootstrap <server>``, with ``argv`` the arguments after the command."""
+    return run_command(lambda: _bootstrap(argv))
